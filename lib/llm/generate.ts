@@ -163,7 +163,7 @@ function buildMeta(
 /** Generate a full architecture solution from natural-language requirements. */
 export async function generateArchitecture(
   requirements: string,
-  cloudProvider: CloudProvider,
+  cloudProvider: CloudProvider = "kingsoft",
 ): Promise<ArchitectureSolution> {
   const cfg = getLlmConfig();
 
@@ -193,7 +193,7 @@ export async function generateArchitecture(
 export function assembleSolution(
   data: LlmSolution,
   cfg: ReturnType<typeof getLlmConfig>,
-  cloudProvider: CloudProvider,
+  cloudProvider: CloudProvider = "kingsoft",
   focus?: ImprovementFocus,
 ): ArchitectureSolution {
   return { ...data, meta: buildMeta(cfg, cloudProvider, focus) };
@@ -235,7 +235,7 @@ export async function regenerateArchitecture(
   return {
     ...solution,
     ...patch,
-    meta: buildMeta(cfg, solution.meta.cloudProvider, focus),
+    meta: buildMeta(cfg, solution.meta.cloudProvider ?? "kingsoft", focus),
   };
 }
 

@@ -40,7 +40,7 @@ function handleError(err: unknown): {
 /** Generate a full architecture solution from natural-language requirements. */
 export async function generateArchitectureAction(
   requirements: string,
-  cloudProvider: CloudProvider,
+  cloudProvider: CloudProvider = "kingsoft",
 ): Promise<ActionResult<ArchitectureSolution>> {
   const trimmed = requirements.trim();
   if (trimmed.length < 10) {

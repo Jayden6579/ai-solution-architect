@@ -35,9 +35,10 @@ import {
  * intelligence, configure an LLM provider.
  */
 
-/** Convenience accessor for the selected provider's service catalog. */
+/** Convenience accessor for the selected provider's service catalog. Falls back
+ * to Kingsoft if the provider is somehow undefined (e.g. a stale client bundle). */
 function cat(d: DetectedRequirements) {
-  return CLOUD_CATALOG[d.cloudProvider];
+  return CLOUD_CATALOG[d.cloudProvider] ?? CLOUD_CATALOG.kingsoft;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -339,7 +340,10 @@ function scaleOf(users: number): Scale {
   return "small";
 }
 
-function detect(text: string, cloudProvider: CloudProvider): DetectedRequirements {
+function detect(
+  text: string,
+  cloudProvider: CloudProvider = "kingsoft",
+): DetectedRequirements {
   const t = text.toLowerCase();
 
   const countryMatch =
@@ -1154,7 +1158,7 @@ function buildAiSection(
 
 export function generateMockSolution(
   requirements: string,
-  cloudProvider: CloudProvider,
+  cloudProvider: CloudProvider = "kingsoft",
 ): ArchitectureSolution {
   const d = detect(requirements, cloudProvider);
   const risks = buildRisks(d);
