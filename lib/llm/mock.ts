@@ -1,6 +1,9 @@
 import type {
+  AiModelOption,
+  AiServiceSection,
   ArchitectureComponents,
   ArchitectureSolution,
+  CloudProvider,
   DesignDecision,
   DeploymentRecommendation,
   ImprovementFocus,
@@ -8,6 +11,13 @@ import type {
   Risk,
   SectionKey,
 } from "@/types";
+import {
+  AI_KEYWORDS,
+  AI_MODEL_PRICING,
+  AI_PLATFORM,
+  CLOUD_CATALOG,
+  CLOUD_LABEL,
+} from "@/lib/cloud/catalog";
 
 /**
  * Built-in demo provider.
@@ -15,13 +25,20 @@ import type {
  * Used automatically when LLM_API_KEY is not configured, so the application
  * can be showcased end-to-end without any external dependency. Unlike a fixed
  * template, it performs structured requirement analysis — detecting domain,
- * scale, HA/DR, budget, region, and compliance — and composes a *visibly
- * different* architecture, diagram, decision set, and risk profile for each.
+ * scale, HA/DR, budget, region, compliance, AI relevance, AND the selected
+ * cloud provider — and composes a *visibly different* architecture, diagram,
+ * decision set, and risk profile for each combination.
  *
  * It is still rule-based (not a real LLM): the goal is that two different
- * customer briefs produce two clearly different proposals, not that it is
- * genuinely intelligent. For true intelligence, configure an LLM provider.
+ * customer briefs (or two different cloud providers) produce two clearly
+ * different proposals, not that it is genuinely intelligent. For true
+ * intelligence, configure an LLM provider.
  */
+
+/** Convenience accessor for the selected provider's service catalog. */
+function cat(d: DetectedRequirements) {
+  return CLOUD_CATALOG[d.cloudProvider];
+}
 
 /* -------------------------------------------------------------------------- */
 /* Types                                                                      */
@@ -34,7 +51,7 @@ type Budget = "low" | "medium" | "high";
 interface DetectedRequirements {
   domain: Domain;
   db: string; // source database (migration) or "" (greenfield)
-  dbTarget: string; // target database
+  dbTarget: string; // target database (engine for migrations, managed DB name for greenfield)
   isMigration: boolean;
   country: string;
   region: string; // cloud region
@@ -45,6 +62,10 @@ interface DetectedRequirements {
   budget: Budget;
   appType: string;
   compliance: string[];
+  cloudProvider: CloudProvider;
+  aiRelevant: boolean;
+  /** Recommended AI approach narrative (only meaningful when aiRelevant). */
+  aiApproach: string;
 }
 
 /** Per-domain content profile driving the generated proposal. */
@@ -272,7 +293,10 @@ function detectAppType(t: string, domain: Domain): string {
   return "an enterprise application";
 }
 
-function detectDb(t: string): { db: string; dbTarget: string; isMigration: boolean } {
+function detectDb(
+  t: string,
+  cloudProvider: CloudProvider,
+): { db: string; dbTarget: string; isMigration: boolean } {
   const isMigration = /migrat|move (from|off)|replace|moderniz|cut[- ]?over|cutover/.test(t);
   const isOracle = /oracle/.test(t);
   const isSqlServer = /sql\s*server|mssql/.test(t);
@@ -281,8 +305,8 @@ function detectDb(t: string): { db: string; dbTarget: string; isMigration: boole
   const wantsOceanBase = /oceanbase/.test(t);
 
   if (!isMigration && !isOracle && !isSqlServer && !isMySQL && !isPostgres && !wantsOceanBase) {
-    // Greenfield — pick a sensible default target by what the app needs.
-    return { db: "", dbTarget: "PostgreSQL (Aurora-compatible)", isMigration: false };
+    // Greenfield — use the selected cloud's managed database product.
+    return { db: "", dbTarget: CLOUD_CATALOG[cloudProvider].database.name, isMigration: false };
   }
 
   const dbTarget = wantsOceanBase
@@ -315,7 +339,7 @@ function scaleOf(users: number): Scale {
   return "small";
 }
 
-function detect(text: string): DetectedRequirements {
+function detect(text: string, cloudProvider: CloudProvider): DetectedRequirements {
   const t = text.toLowerCase();
 
   const countryMatch =
@@ -339,8 +363,16 @@ function detect(text: string): DetectedRequirements {
   const budget = (budgetMatch?.[1] as Budget) ?? "medium";
 
   const domain = detectDomain(t);
-  const { db, dbTarget, isMigration } = detectDb(t);
+  const { db, dbTarget, isMigration } = detectDb(t, cloudProvider);
   const appType = detectAppType(t, domain);
+  const aiRelevant = AI_KEYWORDS.test(t);
+  const aiApproach = /rag|知识库|knowledge base|检索增强/.test(t)
+    ? "Retrieval-Augmented Generation (RAG) over a knowledge base, with the LLM accessed via the cloud AI platform's managed inference endpoint."
+    : /agent|智能体|tool[- ]?use/.test(t)
+      ? "An agent / tool-use pattern: the LLM orchestrates tools and APIs via the cloud AI platform."
+      : /fine-?tune|微调/.test(t)
+        ? "Fine-tuning a foundation model on domain data, hosted on the cloud AI platform, with a fallback to base-model API calls."
+        : "API-based calls to a managed large model via the cloud AI platform (chat / assistant / summarization).";
 
   // Region-specific compliance additions.
   const compliance = [...DOMAIN_PROFILES[domain].compliance];
@@ -363,6 +395,9 @@ function detect(text: string): DetectedRequirements {
     budget,
     appType,
     compliance: Array.from(new Set(compliance)),
+    cloudProvider,
+    aiRelevant,
+    aiApproach,
   };
 }
 
@@ -372,6 +407,7 @@ function detect(text: string): DetectedRequirements {
 
 function buildComponents(d: DetectedRequirements): ArchitectureComponents {
   const p = DOMAIN_PROFILES[d.domain];
+  const c = cat(d);
   const users = d.users;
 
   const scaleClause =
@@ -383,38 +419,38 @@ function buildComponents(d: DetectedRequirements): ArchitectureComponents {
           ? "with read replicas to absorb read-heavy traffic"
           : "right-sized for current load with headroom";
 
-  const orchestrator =
+  const orchestratorNote =
     d.scale === "xlarge" || d.scale === "large"
-      ? "managed Kubernetes (EKS/ACK)"
-      : "managed Kubernetes (EKS/ACK) with an option to start as a modular monolith";
+      ? `${c.orchestrator.name} (managed Kubernetes)`
+      : `${c.orchestrator.name} (managed Kubernetes), starting as a modular monolith`;
 
   const dbDesc = d.isMigration
     ? d.dr || d.ha
       ? `**${d.dbTarget}** in a multi-AZ primary/standby configuration ${scaleClause}. Migrated from ${d.db} via assessment, schema/object conversion, data migration, and a validated cut-over. Distributed ACID transactions keep ${p.modules[0]?.toLowerCase() ?? "records"} consistent.`
       : `**${d.dbTarget}** ${scaleClause}. Migrated from ${d.db} via assessment, schema/object conversion, data migration, and a validated cut-over.`
-    : `**${d.dbTarget}** ${scaleClause}, with point-in-time recovery and automated backups.`;
+    : `**${c.database.name}** ${scaleClause}, with point-in-time recovery and automated backups.`;
 
   const cacheDesc =
     d.scale === "xlarge" || d.scale === "large"
-      ? `**Redis (managed, Multi-AZ)** as a multi-tier cache — session store, hot ${p.label.includes("retail") ? "catalog" : "data"} reads, rate-limit counters, and idempotency keys — with cache-aside plus singleflight to prevent stampedes.`
-      : `**Redis (managed${d.ha ? ", Multi-AZ" : ""})** for sessions, hot reads, rate-limit counters, and idempotency keys (cache-aside).`;
+      ? `**${c.cache.name}** (Multi-AZ) as a multi-tier cache — session store, hot ${p.label.includes("retail") ? "catalog" : "data"} reads, rate-limit counters, and idempotency keys — with cache-aside plus singleflight to prevent stampedes.`
+      : `**${c.cache.name}**${d.ha ? " (Multi-AZ)" : ""} for sessions, hot reads, rate-limit counters, and idempotency keys (cache-aside).`;
 
   return {
-    frontend: `**Next.js 14** (App Router, SSR/ISR) served from a global CDN edge for low TTFB in ${d.country} (${d.region}). ${d.domain === "retail" ? "Catalog and media served from the edge; personalized dashboards stream via React Server Components." : d.domain === "education" ? "Static catalog pages use ISR; authenticated dashboards stream via React Server Components." : "Authenticated dashboards stream via React Server Components."} Tailwind for the design system.`,
-    backend: `**Node.js (NestJS)** modular services exposing domain modules (${p.modules.join(", ")}). Chosen for ${d.appType} for fast iteration, strong typing, and a mature ecosystem. Containerized and horizontally scalable on ${orchestrator}.`,
+    frontend: `**Next.js 14** (App Router, SSR/ISR) served from **${c.cdn.name}** for low TTFB in ${d.country} (${d.region}). ${d.domain === "retail" ? "Catalog and media served from the edge; personalized dashboards stream via React Server Components." : d.domain === "education" ? "Static catalog pages use ISR; authenticated dashboards stream via React Server Components." : "Authenticated dashboards stream via React Server Components."} Tailwind for the design system.`,
+    backend: `**Node.js (NestJS)** modular services exposing domain modules (${p.modules.join(", ")}). Chosen for ${d.appType} for fast iteration, strong typing, and a mature ecosystem. Containerized and horizontally scalable on ${orchestratorNote}.`,
     apiLayer: `${p.apiNote}. All routes behind an API gateway with rate limiting, JWT validation, and idempotency keys for writes.`,
-    loadBalancer: `${d.dr ? "Global anycast " : ""}**Application Load Balancer** (L7) with path-based routing, integrated WAF, and health checks. SSL/TLS termination at the edge (TLS 1.3)${d.ha ? " across multiple AZs" : ""}.`,
+    loadBalancer: `${d.dr ? "Global anycast " : ""}**${c.loadBalancer.name}** (L7) with path-based routing, integrated WAF, and health checks. SSL/TLS termination at the edge (TLS 1.3)${d.ha ? " across multiple AZs" : ""}.`,
     database: dbDesc,
     cache: cacheDesc,
-    messageQueue: `**${d.scale === "xlarge" ? "Kafka" : "Kafka (managed MSK equivalent)"}** for ${p.queueUse}. Decouples slow operations from the request path so the API stays responsive.`,
-    objectStorage: `**S3-compatible object storage** for ${p.storageUse}. Versioning + lifecycle policies tier cold content to archive; signed URLs gate access.`,
-    monitoring: `**Prometheus + Grafana** for metrics (RED/USE method) with golden-signal dashboards (latency, traffic, errors, saturation). Synthetic checks for the critical ${p.modules[0]?.toLowerCase() ?? "user"} journey.`,
-    logging: `**OpenTelemetry** collectors shipping structured logs and traces to a centralized store (Loki/ELK), with correlation IDs spanning API, queue, and DB${(d.compliance.includes("PCI-DSS") || d.domain === "healthcare") ? " and tamper-evident retention for audit" : ""}.`,
-    security: `${p.securityFocus}. Data residency kept within ${d.country} (${d.region})${d.compliance.length ? `; controls mapped to ${d.compliance.join(", ")}` : ""}.`,
+    messageQueue: `**${c.messageQueue.name}** for ${p.queueUse}. Decouples slow operations from the request path so the API stays responsive.`,
+    objectStorage: `**${c.objectStorage.name}** for ${p.storageUse}. Versioning + lifecycle policies tier cold content to archive; signed URLs gate access.`,
+    monitoring: `**${c.monitoring.name}** for metrics (RED/USE method) with golden-signal dashboards (latency, traffic, errors, saturation). Synthetic checks for the critical ${p.modules[0]?.toLowerCase() ?? "user"} journey.`,
+    logging: `**OpenTelemetry** collectors shipping structured logs and traces to **${c.logging.name}**, with correlation IDs spanning API, queue, and DB${(d.compliance.includes("PCI-DSS") || d.domain === "healthcare") ? " and tamper-evident retention for audit" : ""}.`,
+    security: `${p.securityFocus}. Data residency kept within ${d.country} (${d.region}) on ${CLOUD_LABEL[d.cloudProvider]}${d.compliance.length ? `; controls mapped to ${d.compliance.join(", ")}` : ""}.`,
     disasterRecovery: d.dr
-      ? `Cross-region standby with automated async replication (${d.dbTarget} binlog/redo shipping), frequent snapshots, and runbooks + quarterly DR drills. Failover is automated for the data tier; full-region switch is runbook-driven.`
+      ? `Cross-region standby with automated async replication (${d.isMigration ? d.dbTarget : c.database.name} binlog/redo shipping), frequent snapshots, and runbooks + quarterly DR drills. Failover is automated for the data tier; full-region switch is runbook-driven.`
       : `Daily automated backups with PITR, weekly restore validation, and documented runbooks${d.ha ? ". Multi-AZ standby for the data tier handles zonal failure." : "."}`,
-    network: `VPC with private subnets for data/queue tiers and public subnets only for the load balancer. VPC endpoints for managed services, NAT for egress, and Security Groups enforcing least-privilege east-west traffic${d.dr ? " plus cross-region VPC peering/Transit Gateway for DR replication" : ""}.`,
+    network: `**${c.network.name}** with private subnets for data/queue tiers and public subnets only for the load balancer. Service endpoints for managed services, NAT for egress, and Security Groups enforcing least-privilege east-west traffic${d.dr ? " plus cross-region peering/Transit Gateway for DR replication" : ""}.`,
   };
 }
 
@@ -431,6 +467,7 @@ function buildComponents(d: DetectedRequirements): ArchitectureComponents {
  */
 function buildDiagram(d: DetectedRequirements): string {
   const p = DOMAIN_PROFILES[d.domain];
+  const c = cat(d);
   const primary = p.modules[0] ?? "Core";
   const lines: string[] = ["flowchart TD"];
 
@@ -444,8 +481,8 @@ function buildDiagram(d: DetectedRequirements): string {
 
   // Edge / security
   lines.push('  subgraph Edge["Edge / Security"]');
-  lines.push("    CDN[CDN + WAF]");
-  lines.push("    LB[Application Load Balancer]");
+  lines.push(`    CDN["${c.cdn.name} + WAF"]`);
+  lines.push(`    LB["${c.loadBalancer.name}"]`);
   lines.push("  end");
 
   // Application tier
@@ -462,13 +499,13 @@ function buildDiagram(d: DetectedRequirements): string {
     }
   }
 
-  // Data tier
+  // Data tier — node labels branded with the provider's real products.
   lines.push('  subgraph Data["Data Tier"]');
   lines.push(`    DB[("${d.dbTarget} Primary")]`);
   if (d.ha || d.dr) lines.push(`    DBR[("${d.dbTarget} Standby")]`);
-  lines.push('    REDIS[("Redis Cache")]');
-  lines.push(`    MQ[["${d.scale === "xlarge" ? "Kafka" : "Message Queue"}"]]`);
-  lines.push('    S3[("Object Storage")]');
+  lines.push(`    REDIS[("${c.cache.name}")]`);
+  lines.push(`    MQ[["${c.messageQueue.name}"]]`);
+  lines.push(`    S3[("${c.objectStorage.name}")]`);
   for (const node of p.diagramNodes) {
     if (node.tier === "Data") {
       lines.push(`    ${node.id}["${node.label}"]`);
@@ -478,8 +515,8 @@ function buildDiagram(d: DetectedRequirements): string {
 
   // Observability
   lines.push('  subgraph Obs["Observability"]');
-  lines.push("    MON[Prometheus + Grafana]");
-  lines.push("    LOG[Centralized Logging]");
+  lines.push(`    MON["${c.monitoring.name}"]`);
+  lines.push(`    LOG["${c.logging.name}"]`);
   lines.push("  end");
 
   // DR tier (only when DR required)
@@ -532,6 +569,7 @@ function buildDiagram(d: DetectedRequirements): string {
 
 function buildDecisions(d: DetectedRequirements): DesignDecision[] {
   const p = DOMAIN_PROFILES[d.domain];
+  const c = cat(d);
   const decisions: DesignDecision[] = [];
 
   // 1. Database (migration or greenfield).
@@ -569,14 +607,11 @@ function buildDecisions(d: DetectedRequirements): DesignDecision[] {
 
   // 2. Orchestration (varies by scale/budget).
   decisions.push({
-    component:
-      d.scale === "xlarge" || d.scale === "large"
-        ? "Managed Kubernetes (EKS/ACK)"
-        : "Modular Monolith on Kubernetes",
+    component: c.orchestrator.name,
     rationale:
       d.scale === "xlarge" || d.scale === "large"
-        ? `At ${d.users.toLocaleString()} users the workload needs elastic horizontal scale and advanced deployment strategies. Managed Kubernetes gives HPA, canary/rolling deploys with rollback, and consistent environments — worth the platform investment at this scale.`
-        : `At ${d.users.toLocaleString()} users a modular monolith on managed Kubernetes balances delivery speed and clean boundaries, and can be split into services later without re-architecture as ${d.appType} grows.`,
+        ? `At ${d.users.toLocaleString()} users the workload needs elastic horizontal scale and advanced deployment strategies. ${c.orchestrator.name} gives HPA, canary/rolling deploys with rollback, and consistent environments — worth the platform investment at this scale.`
+        : `At ${d.users.toLocaleString()} users a modular monolith on ${c.orchestrator.name} balances delivery speed and clean boundaries, and can be split into services later without re-architecture as ${d.appType} grows.`,
     advantages:
       d.scale === "xlarge" || d.scale === "large"
         ? [
@@ -605,11 +640,11 @@ function buildDecisions(d: DetectedRequirements): DesignDecision[] {
 
   // 3. Caching (varies by scale).
   decisions.push({
-    component: "Redis (managed)",
+    component: c.cache.name,
     rationale:
       d.scale === "xlarge" || d.scale === "large"
-        ? `At ${d.users.toLocaleString()} users the database cannot absorb the read load directly. A multi-tier Redis cache (sessions, hot reads, rate limits) protects the primary and keeps p95 latency low, with singleflight + jittered TTLs to prevent stampedes.`
-        : `Redis provides sub-millisecond reads for sessions, hot ${p.label.includes("retail") ? "catalog" : "data"}, and rate-limit counters, protecting the database from read amplification at ${d.users.toLocaleString()} users.`,
+        ? `At ${d.users.toLocaleString()} users the database cannot absorb the read load directly. A multi-tier ${c.cache.name} cache (sessions, hot reads, rate limits) protects the primary and keeps p95 latency low, with singleflight + jittered TTLs to prevent stampedes.`
+        : `${c.cache.name} provides sub-millisecond reads for sessions, hot ${p.label.includes("retail") ? "catalog" : "data"}, and rate-limit counters, protecting the database from read amplification at ${d.users.toLocaleString()} users.`,
     advantages: [
       "Removes hot-read load from the primary database",
       "Atomic primitives power rate limiting and idempotency",
@@ -624,8 +659,8 @@ function buildDecisions(d: DetectedRequirements): DesignDecision[] {
 
   // 4. Messaging (varies by domain).
   decisions.push({
-    component: d.scale === "xlarge" ? "Kafka" : "Kafka (managed)",
-    rationale: `Kafka ${p.queueUse}. It buffers load spikes, provides a durable replayable event log, and decouples producers from consumers so the learner/customer-facing request path stays fast.`,
+    component: c.messageQueue.name,
+    rationale: `${c.messageQueue.name} ${p.queueUse}. It buffers load spikes, provides a durable replayable event log, and decouples producers from consumers so the learner/customer-facing request path stays fast.`,
     advantages: [
       "Buffers load spikes from batch and async workloads",
       "Durable, replayable event log for analytics and audit",
@@ -781,6 +816,7 @@ function buildRisks(d: DetectedRequirements): Risk[] {
 
 function buildMitigations(d: DetectedRequirements, risks: Risk[]): Mitigation[] {
   const p = DOMAIN_PROFILES[d.domain];
+  const c = cat(d);
   const byCat = (cat: string) => risks.find((r) => r.category === cat);
   const mitigations: Mitigation[] = [];
 
@@ -816,8 +852,8 @@ function buildMitigations(d: DetectedRequirements, risks: Risk[]): Mitigation[] 
       riskId: compliance.id,
       strategy: "Enforce data residency and access control by architecture, not policy.",
       actions: [
-        `Pin data, cache, and backups to the ${d.country} region (${d.region})`,
-        "Block cross-region egress via VPC and routing controls",
+        `Pin data, cache, and backups to the ${d.country} region (${d.region}) on ${CLOUD_LABEL[d.cloudProvider]}`,
+        `Block cross-region egress via ${c.network.name} and routing controls`,
         "Encrypt all data at rest with KMS-managed keys and audit access",
         ...(d.domain === "healthcare"
           ? ["Apply consent-gated, role-based access to PHI with break-glass audit logging"]
@@ -995,14 +1031,15 @@ function buildDeployment(d: DetectedRequirements): DeploymentRecommendation {
 
 function buildSummary(d: DetectedRequirements): string {
   const p = DOMAIN_PROFILES[d.domain];
+  const c = cat(d);
   const migrationClause = d.isMigration
     ? ` migrate ${d.db} to ${d.dbTarget} to power `
     : ` stand up a new platform for `;
-  const goal = `The customer, based in ${d.country} (${d.region}), is seeking to${migrationClause}${d.appType} serving approximately ${d.users.toLocaleString()} users.`;
+  const goal = `The customer, based in ${d.country} (${d.region}), is seeking to${migrationClause}${d.appType} serving approximately ${d.users.toLocaleString()} users, on ${CLOUD_LABEL[d.cloudProvider]}.`;
 
   const priorities = `The stated priorities are${d.ha ? " high availability" : " reliable operation"}${d.dr ? " and disaster recovery" : ""}, at a ${d.budget} budget${d.compliance.length ? `, under ${d.compliance.join(", ")} compliance` : ""}.`;
 
-  const arch = `This proposal recommends a cloud-native, containerized architecture with ${d.dbTarget} as the ${d.isMigration ? "distributed, " : ""}strongly-consistent data tier, a managed Redis cache, ${d.scale === "xlarge" ? "Kafka" : "a Kafka message queue"}, and S3-compatible object storage for ${p.storageUse}. Observability is built in from day one via OpenTelemetry, Prometheus, and centralized logging${d.isMigration ? " to de-risk the migration" : ""}.`;
+  const arch = `This proposal recommends a cloud-native, containerized architecture on ${CLOUD_LABEL[d.cloudProvider]} with ${d.isMigration ? d.dbTarget : c.database.name} as the ${d.isMigration ? "distributed, " : ""}strongly-consistent data tier, ${c.cache.name} for caching, ${c.messageQueue.name} for asynchronous processing, and ${c.objectStorage.name} for ${p.storageUse}. Observability is built in from day one via OpenTelemetry, ${c.monitoring.name}, and ${c.logging.name}${d.isMigration ? " to de-risk the migration" : ""}.`;
 
   const drClause = d.dr
     ? ` A ${d.budget === "high" ? "active-active cross-region" : "cross-region warm-standby"} disaster recovery design bounds RTO and RPO, meeting the business-continuity requirement.`
@@ -1014,11 +1051,112 @@ function buildSummary(d: DetectedRequirements): string {
 }
 
 /* -------------------------------------------------------------------------- */
+/* AI services & token estimation (optional section)                          */
+/* -------------------------------------------------------------------------- */
+
+function priceOf(name: string) {
+  return AI_MODEL_PRICING.find((m) => m.name === name)!;
+}
+
+/**
+ * Builds the optional AI section when the workload is AI-relevant. Uses the
+ * selected cloud's AI platform as the primary model and lists 金山云星流 as a
+ * cross-cloud alternative (or as the primary when the cloud is Kingsoft).
+ */
+function buildAiSection(
+  d: DetectedRequirements,
+): AiServiceSection | undefined {
+  if (!d.aiRelevant) return undefined;
+
+  const platform = AI_PLATFORM[d.cloudProvider];
+  const models: AiModelOption[] = [];
+  const primaryUse = "Primary model for the AI workload (chat / assistant / retrieval).";
+
+  if (d.cloudProvider === "kingsoft") {
+    const x = priceOf("星流 大模型");
+    models.push({
+      name: x.name,
+      provider: x.provider,
+      use: primaryUse,
+      inputPricePer1M: x.inputPricePer1M,
+      outputPricePer1M: x.outputPricePer1M,
+    });
+    const mini = priceOf("gpt-4o-mini");
+    models.push({
+      name: mini.name,
+      provider: mini.provider,
+      use: "Lightweight tasks — classification, routing, summaries",
+      inputPricePer1M: mini.inputPricePer1M,
+      outputPricePer1M: mini.outputPricePer1M,
+    });
+  } else {
+    const gpt = priceOf("gpt-4o");
+    models.push({
+      name: gpt.name,
+      provider: platform,
+      use: primaryUse,
+      inputPricePer1M: gpt.inputPricePer1M,
+      outputPricePer1M: gpt.outputPricePer1M,
+    });
+    const x = priceOf("星流 大模型");
+    models.push({
+      name: x.name,
+      provider: x.provider,
+      use: "Cross-cloud alternative (金山云星流)",
+      inputPricePer1M: x.inputPricePer1M,
+      outputPricePer1M: x.outputPricePer1M,
+    });
+  }
+  const ds = priceOf("DeepSeek-V3");
+  models.push({
+    name: ds.name,
+    provider: ds.provider,
+    use: "Cost-effective alternative for high-volume inference",
+    inputPricePer1M: ds.inputPricePer1M,
+    outputPricePer1M: ds.outputPricePer1M,
+  });
+
+  // Representative token estimation from the user base.
+  const dailySessions = Math.max(50, Math.round(d.users * 0.4));
+  const inputPerSession = 1500;
+  const outputPerSession = 400;
+  const monthlyInputTokens = dailySessions * inputPerSession * 30;
+  const monthlyOutputTokens = dailySessions * outputPerSession * 30;
+  const primary = models[0];
+  const estMonthlyCostUsd =
+    (monthlyInputTokens / 1_000_000) * (primary.inputPricePer1M ?? 0) +
+    (monthlyOutputTokens / 1_000_000) * (primary.outputPricePer1M ?? 0);
+
+  const note =
+    d.cloudProvider === "kingsoft"
+      ? "金山云星流 (Xingliu) is 金山云's AI platform for managed large-model inference, RAG, and agents — recommended here as the in-cloud AI tier."
+      : `${platform} is the in-cloud AI platform; 金山云星流 (Kingsoft Cloud Xingliu) is listed as a cross-cloud alternative for cost or sovereignty reasons.`;
+
+  return {
+    approach: d.aiApproach,
+    models,
+    tokenEstimate: {
+      dailySessions,
+      tokensPerSession: inputPerSession + outputPerSession,
+      monthlyInputTokens,
+      monthlyOutputTokens,
+      estMonthlyCostUsd: Math.round(estMonthlyCostUsd * 100) / 100,
+      disclaimer:
+        "Token volumes and costs are representative estimates for planning only. Replace model pricing with current, accurate rates (especially 星流) before any commercial use.",
+    },
+    note,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
 /* Entry point                                                                */
 /* -------------------------------------------------------------------------- */
 
-export function generateMockSolution(requirements: string): ArchitectureSolution {
-  const d = detect(requirements);
+export function generateMockSolution(
+  requirements: string,
+  cloudProvider: CloudProvider,
+): ArchitectureSolution {
+  const d = detect(requirements, cloudProvider);
   const risks = buildRisks(d);
   return {
     executiveSummary: buildSummary(d),
@@ -1028,11 +1166,13 @@ export function generateMockSolution(requirements: string): ArchitectureSolution
     risks,
     mitigations: buildMitigations(d, risks),
     deployment: buildDeployment(d),
+    aiSection: buildAiSection(d),
     meta: {
       generatedAt: new Date().toISOString(),
       model: "demo-architect-v1",
       provider: "Demo Mode (built-in)",
       mode: "demo",
+      cloudProvider,
     },
   };
 }

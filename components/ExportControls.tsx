@@ -10,6 +10,7 @@ import {
   solutionToMarkdown,
   copyToClipboard,
 } from "@/lib/download";
+import { CLOUD_LABEL } from "@/lib/cloud/catalog";
 import type { ArchitectureSolution } from "@/types";
 
 function formatTime(iso: string): string {
@@ -45,6 +46,9 @@ export function ExportControls({
         <span className="truncate">
           Proposal · {formatTime(solution.meta.generatedAt)}
         </span>
+        <Badge variant="blue">
+          {CLOUD_LABEL[solution.meta.cloudProvider]}
+        </Badge>
         {solution.meta.focus ? (
           <Badge variant="brand">{solution.meta.focus} focus</Badge>
         ) : null}

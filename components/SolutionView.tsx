@@ -11,6 +11,7 @@ import { DesignDecisionsSection } from "@/components/sections/DesignDecisionsSec
 import { RisksSection } from "@/components/sections/RisksSection";
 import { MitigationsSection } from "@/components/sections/MitigationsSection";
 import { DeploymentSection } from "@/components/sections/DeploymentSection";
+import { AiServicesSection } from "@/components/sections/AiServicesSection";
 import { getImprovementConfig } from "@/lib/llm/improvements";
 import type { ArchitectureSolution, ImprovementFocus, SectionKey } from "@/types";
 
@@ -67,6 +68,9 @@ export function SolutionView({
           deployment={solution.deployment}
           regenerating={is("deployment")}
         />
+        {solution.aiSection ? (
+          <AiServicesSection aiSection={solution.aiSection} />
+        ) : null}
       </div>
 
       <div className="flex items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-900/40 dark:text-slate-400">

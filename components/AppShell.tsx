@@ -13,7 +13,12 @@ import {
   regenerateArchitectureAction,
 } from "@/app/actions";
 import { DEFAULT_SAMPLE } from "@/lib/samples";
-import type { ArchitectureSolution, ImprovementFocus, ProviderInfo } from "@/types";
+import type {
+  ArchitectureSolution,
+  CloudProvider,
+  ImprovementFocus,
+  ProviderInfo,
+} from "@/types";
 
 const STAGES = [
   "Parsing requirements",
@@ -32,6 +37,8 @@ const STAGES = [
  */
 export function AppShell({ providerInfo }: { providerInfo: ProviderInfo }) {
   const [requirements, setRequirements] = React.useState("");
+  const [cloudProvider, setCloudProvider] =
+    React.useState<CloudProvider>("kingsoft");
   const [solution, setSolution] = React.useState<ArchitectureSolution | null>(
     null,
   );
@@ -80,14 +87,14 @@ export function AppShell({ providerInfo }: { providerInfo: ProviderInfo }) {
     setRegenError(null);
     setSolution(null);
     setIsGenerating(true);
-    const res = await generateArchitectureAction(requirements);
+    const res = await generateArchitectureAction(requirements, cloudProvider);
     setIsGenerating(false);
     if (res.ok) {
       setSolution(res.data);
     } else {
       setError({ message: res.error, hint: res.hint });
     }
-  }, [requirements, isGenerating]);
+  }, [requirements, cloudProvider, isGenerating]);
 
   const handleImprove = React.useCallback(
     async (focus: ImprovementFocus) => {
@@ -137,6 +144,8 @@ export function AppShell({ providerInfo }: { providerInfo: ProviderInfo }) {
               onSample={handleSample}
               isGenerating={isGenerating || isRegenerating}
               providerInfo={providerInfo}
+              cloudProvider={cloudProvider}
+              onCloudProviderChange={setCloudProvider}
             />
           </div>
         </aside>

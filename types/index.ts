@@ -10,6 +10,26 @@ export type Likelihood = "Low" | "Medium" | "High";
 export type DeploymentPattern = "Single AZ" | "Multi AZ" | "Cross Region DR";
 
 /**
+ * The target cloud provider the architecture is built on. Selected by the
+ * user (not the LLM model provider) and flows end-to-end so the proposal names
+ * that provider's real managed services.
+ */
+export type CloudProvider = "aws" | "azure" | "gcp" | "kingsoft";
+
+export interface CloudProviderOption {
+  key: CloudProvider;
+  label: string;
+}
+
+/** Selector options for the cloud-provider picker in the UI. */
+export const CLOUD_PROVIDERS: CloudProviderOption[] = [
+  { key: "kingsoft", label: "金山云" },
+  { key: "aws", label: "AWS" },
+  { key: "azure", label: "Azure" },
+  { key: "gcp", label: "Google Cloud" },
+];
+
+/**
  * The proposed architecture broken down into the standard building blocks a
  * solution architect reasons about during pre-sales. Each value is a short
  * recommendation (technology + one-line rationale); markdown is allowed.
@@ -64,12 +84,50 @@ export interface DeploymentRecommendation {
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* AI services & token estimation (optional section, shown when AI-relevant) */
+/* -------------------------------------------------------------------------- */
+
+export interface AiModelOption {
+  /** Model / offering name, e.g. "星流 X1" or "gpt-4o". */
+  name: string;
+  /** Platform/provider label, e.g. "金山云星流", "Amazon Bedrock". */
+  provider: string;
+  /** What this model is used for in the solution. */
+  use: string;
+  /** Representative USD price per 1M input tokens (optional; estimates only). */
+  inputPricePer1M?: number;
+  /** Representative USD price per 1M output tokens (optional; estimates only). */
+  outputPricePer1M?: number;
+}
+
+export interface AiTokenEstimate {
+  dailySessions: number;
+  tokensPerSession: number;
+  monthlyInputTokens: number;
+  monthlyOutputTokens: number;
+  /** Estimated monthly cost in USD (representative). */
+  estMonthlyCostUsd: number;
+  disclaimer: string;
+}
+
+export interface AiServiceSection {
+  /** Recommended AI approach narrative (RAG / fine-tune / API / Agent). */
+  approach: string;
+  models: AiModelOption[];
+  tokenEstimate: AiTokenEstimate;
+  /** Optional note, e.g. 星流 positioning. */
+  note?: string;
+}
+
 export interface SolutionMeta {
   generatedAt: string;
   model: string;
   provider: string;
   /** "live" when a real LLM was used, "demo" when the mock provider answered. */
   mode: "live" | "demo";
+  /** Target cloud provider the architecture is built on. */
+  cloudProvider: CloudProvider;
   /** Focus applied during the most recent regeneration, if any. */
   focus?: ImprovementFocus;
 }
@@ -82,6 +140,8 @@ export interface ArchitectureSolution {
   risks: Risk[];
   mitigations: Mitigation[];
   deployment: DeploymentRecommendation;
+  /** Present only when the workload is AI-relevant. Not regenerable. */
+  aiSection?: AiServiceSection;
   meta: SolutionMeta;
 }
 

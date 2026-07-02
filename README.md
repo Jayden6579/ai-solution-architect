@@ -15,7 +15,9 @@ Built to showcase Solution Architect / Pre-sales Engineer / Technical Consultant
 ## ✨ Features
 
 - **Natural-language input** — describe the customer's workload, scale, country, HA/DR, and budget.
-- **Structured output** across 7 sections: Executive Summary, Proposed Architecture, Architecture Diagram (Mermaid), Design Decisions, Risks, Mitigations, Deployment Recommendation.
+- **Multi-cloud target** — pick **金山云 / AWS / Azure / Google Cloud**; the proposal names that provider's *real managed services* and renders a provider-branded diagram (KS3, Aurora, Event Hubs, Cloud SQL, …).
+- **AI Services & Token Estimation** — when the workload is AI-relevant (LLM/RAG/copilot/agent/…), an 8th section recommends an AI approach, lists model options (featuring **金山云星流 / Xingliu**), and estimates monthly token volume + representative cost.
+- **Structured output** across 7 (+1 optional AI) sections: Executive Summary, Proposed Architecture, Architecture Diagram (Mermaid), Design Decisions, Risks, Mitigations, Deployment Recommendation.
 - **Loading animation** with staged status messages + skeleton cards.
 - **Exports** — Copy to clipboard, **Download as Markdown**, **Download as PDF** (print-to-PDF with the rendered diagram embedded).
 - **Refine the proposal** (bonus) — Improve Design · Reduce Cost · Improve Performance · Improve Security · Improve High Availability. Each regenerates **only the related sections** without redoing the whole proposal.

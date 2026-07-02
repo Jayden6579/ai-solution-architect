@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
-import type { ProviderInfo } from "@/types";
+import { CLOUD_PROVIDERS } from "@/types";
+import type { CloudProvider, ProviderInfo } from "@/types";
 
 const MIN_LENGTH = 10;
 
@@ -25,6 +26,8 @@ export function ControlPanel({
   onSample,
   isGenerating,
   providerInfo,
+  cloudProvider,
+  onCloudProviderChange,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -33,6 +36,8 @@ export function ControlPanel({
   onSample: () => void;
   isGenerating: boolean;
   providerInfo: ProviderInfo;
+  cloudProvider: CloudProvider;
+  onCloudProviderChange: (p: CloudProvider) => void;
 }) {
   const canGenerate = value.trim().length >= MIN_LENGTH;
 
@@ -65,6 +70,36 @@ export function ControlPanel({
         <Badge variant={providerInfo.mode === "live" ? "green" : "amber"}>
           {providerInfo.model}
         </Badge>
+      </div>
+
+      {/* Target cloud provider selector */}
+      <div className="rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Target cloud
+          </span>
+          <span className="text-[10px] text-slate-400 dark:text-slate-500">
+            drives real service names
+          </span>
+        </div>
+        <div className="grid grid-cols-4 gap-1.5">
+          {CLOUD_PROVIDERS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => onCloudProviderChange(p.key)}
+              disabled={isGenerating}
+              className={cn(
+                "rounded-md border px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-50",
+                cloudProvider === p.key
+                  ? "border-brand-500 bg-brand-50 text-brand-700 dark:border-brand-700 dark:bg-brand-950 dark:text-brand-300"
+                  : "border-slate-200 bg-slate-50 text-slate-600 hover:border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Input card */}

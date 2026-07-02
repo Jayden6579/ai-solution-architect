@@ -8,6 +8,7 @@ import {
 import { getImprovementConfig } from "@/lib/llm/improvements";
 import type {
   ArchitectureSolution,
+  CloudProvider,
   ImprovementFocus,
 } from "@/types";
 
@@ -39,6 +40,7 @@ function handleError(err: unknown): {
 /** Generate a full architecture solution from natural-language requirements. */
 export async function generateArchitectureAction(
   requirements: string,
+  cloudProvider: CloudProvider,
 ): Promise<ActionResult<ArchitectureSolution>> {
   const trimmed = requirements.trim();
   if (trimmed.length < 10) {
@@ -50,7 +52,7 @@ export async function generateArchitectureAction(
   }
 
   try {
-    const solution = await generateArchitecture(trimmed);
+    const solution = await generateArchitecture(trimmed, cloudProvider);
     return { ok: true, data: solution };
   } catch (err) {
     return handleError(err);

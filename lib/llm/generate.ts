@@ -12,6 +12,7 @@ import {
 } from "./mock";
 import type {
   ArchitectureSolution,
+  CloudProvider,
   ImprovementFocus,
   SectionKey,
   SolutionMeta,
@@ -146,6 +147,7 @@ function extractJsonObject(raw: string): unknown {
 
 function buildMeta(
   cfg: ReturnType<typeof getLlmConfig>,
+  cloudProvider: CloudProvider,
   focus?: ImprovementFocus,
 ): SolutionMeta {
   return {
@@ -153,6 +155,7 @@ function buildMeta(
     model: cfg.model,
     provider: cfg.providerName,
     mode: cfg.mode,
+    cloudProvider,
     ...(focus ? { focus } : {}),
   };
 }
@@ -160,17 +163,18 @@ function buildMeta(
 /** Generate a full architecture solution from natural-language requirements. */
 export async function generateArchitecture(
   requirements: string,
+  cloudProvider: CloudProvider,
 ): Promise<ArchitectureSolution> {
   const cfg = getLlmConfig();
 
   if (cfg.mode === "demo") {
-    return generateMockSolution(requirements);
+    return generateMockSolution(requirements, cloudProvider);
   }
 
   const client = clientFor(cfg);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "user", content: buildUserPrompt(requirements) },
+    { role: "user", content: buildUserPrompt(requirements, cloudProvider) },
   ];
 
   const raw = await completeJson(client, cfg, messages);
@@ -183,15 +187,16 @@ export async function generateArchitecture(
     );
   }
 
-  return assembleSolution(parsed.data, cfg);
+  return assembleSolution(parsed.data, cfg, cloudProvider);
 }
 
 export function assembleSolution(
   data: LlmSolution,
   cfg: ReturnType<typeof getLlmConfig>,
+  cloudProvider: CloudProvider,
   focus?: ImprovementFocus,
 ): ArchitectureSolution {
-  return { ...data, meta: buildMeta(cfg, focus) };
+  return { ...data, meta: buildMeta(cfg, cloudProvider, focus) };
 }
 
 /**
@@ -230,7 +235,7 @@ export async function regenerateArchitecture(
   return {
     ...solution,
     ...patch,
-    meta: buildMeta(cfg, focus),
+    meta: buildMeta(cfg, solution.meta.cloudProvider, focus),
   };
 }
 
