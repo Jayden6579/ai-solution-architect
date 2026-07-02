@@ -13,39 +13,284 @@ import type {
  * Built-in demo provider.
  *
  * Used automatically when LLM_API_KEY is not configured, so the application
- * can be showcased end-to-end without any external dependency. It performs
- * lightweight keyword detection on the requirements and produces a coherent,
- * realistic enterprise architecture (defaulting to an Oracle -> OceanBase
- * migration for an LMS in Malaysia when nothing more specific is detected).
+ * can be showcased end-to-end without any external dependency. Unlike a fixed
+ * template, it performs structured requirement analysis — detecting domain,
+ * scale, HA/DR, budget, region, and compliance — and composes a *visibly
+ * different* architecture, diagram, decision set, and risk profile for each.
+ *
+ * It is still rule-based (not a real LLM): the goal is that two different
+ * customer briefs produce two clearly different proposals, not that it is
+ * genuinely intelligent. For true intelligence, configure an LLM provider.
  */
 
+/* -------------------------------------------------------------------------- */
+/* Types                                                                      */
+/* -------------------------------------------------------------------------- */
+
+type Domain = "financial" | "healthcare" | "retail" | "education" | "general";
+type Scale = "small" | "medium" | "large" | "xlarge";
+type Budget = "low" | "medium" | "high";
+
 interface DetectedRequirements {
-  db: string;
-  dbTarget: string;
+  domain: Domain;
+  db: string; // source database (migration) or "" (greenfield)
+  dbTarget: string; // target database
+  isMigration: boolean;
   country: string;
+  region: string; // cloud region
   users: number;
+  scale: Scale;
   ha: boolean;
   dr: boolean;
-  budget: string;
+  budget: Budget;
   appType: string;
-  domain: string;
+  compliance: string[];
 }
 
-function detect(text: string): DetectedRequirements {
-  const t = text.toLowerCase();
+/** Per-domain content profile driving the generated proposal. */
+interface DomainProfile {
+  label: string;
+  /** Backend domain modules, used in the backend component text + diagram. */
+  modules: string[];
+  /** What object storage is primarily used for. */
+  storageUse: string;
+  /** What the message queue is primarily used for. */
+  queueUse: string;
+  /** Domain-specific API-layer note. */
+  apiNote: string;
+  /** Domain-specific security emphasis. */
+  securityFocus: string;
+  /** Compliance regimes to call out. */
+  compliance: string[];
+  /** A domain-specific design decision. */
+  decision: Omit<DesignDecision, never>;
+  /** Extra diagram nodes (id, label, tier, connectsFrom, connectsTo). */
+  diagramNodes: DiagramNode[];
+}
 
+interface DiagramNode {
+  id: string;
+  label: string;
+  tier: "App" | "Data";
+  connectFrom: string;
+  connectTo?: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Domain profiles                                                            */
+/* -------------------------------------------------------------------------- */
+
+const DOMAIN_PROFILES: Record<Domain, DomainProfile> = {
+  financial: {
+    label: "financial services / core banking",
+    modules: ["Accounts", "Payments", "Ledger", "KYC/AML", "Fraud Detection"],
+    storageUse: "signed statements, KYC documents, and tamper-evident audit archives",
+    queueUse: "an event stream for the transaction ledger (event sourcing), notifications, and async sanctions/fraud checks",
+    apiNote: "Open Banking/PSD2-style APIs alongside internal ones, with strong idempotency and signed requests",
+    securityFocus:
+      "PCI-DSS scope reduction, HSM-backed key management, mutual TLS between services, immutable audit trails, and AML/KYC workflow controls",
+    compliance: ["PCI-DSS", "AML/KYC"],
+    decision: {
+      component: "Event-Sourced Ledger (Kafka + CQRS)",
+      rationale:
+        "Financial transactions demand an append-only, replayable source of truth. An event-sourced ledger on Kafka gives immutable history, exact-once semantics, and lets read models (balances, statements) be rebuilt without touching the transactional core.",
+      advantages: [
+        "Immutable, auditable history of every transaction",
+        "Read models can be rebuilt/replayed without risking the core",
+        "Natural fit for fraud detection and analytics consumers",
+      ],
+      tradeOffs: [
+        "Eventual consistency on read models needs careful UX handling",
+        "Schema evolution discipline is required (versioned events)",
+        "Higher operational complexity than a CRUD ledger",
+      ],
+    },
+    diagramNodes: [
+      { id: "FRAUD", label: "Fraud Engine", tier: "App", connectFrom: "API" },
+      { id: "LEDGER", label: "Ledger (event store)", tier: "Data", connectFrom: "MQ", connectTo: "DB" },
+    ],
+  },
+  healthcare: {
+    label: "healthcare / clinical",
+    modules: ["Patients", "Appointments", "EHR Integration", "Prescriptions", "Clinical Billing"],
+    storageUse: "medical documents and imaging (DICOM), with immutable retention",
+    queueUse: "asynchronous HL7/FHIR message processing, lab result ingestion, and patient notifications",
+    apiNote: "FHIR R4 APIs as the interoperability layer, with consent-gated access to clinical records",
+    securityFocus:
+      "HIPAA/PDPA-aligned controls: field-level encryption for PHI, consent management, break-glass audit logging, and least-privilege access per clinician role",
+    compliance: ["HIPAA", "PDPA"],
+    decision: {
+      component: "FHIR Interoperability Layer",
+      rationale:
+        "A FHIR R4 API layer decouples the clinical data model from internal storage and is the de-facto standard for EHR/health-system integration. It enables consent-gated, standards-compliant data exchange with hospitals, labs, and payer systems.",
+      advantages: [
+        "Standards-based exchange with EHRs, labs, and payers",
+        "Consent-gated access to PHI is enforceable at the API",
+        "Decouples internal storage schema from the interoperability contract",
+      ],
+      tradeOffs: [
+        "FHIR modeling has a learning curve for the team",
+        "Mapping internal entities to FHIR resources needs governance",
+        "Some legacy systems still speak HL7 v2 (needs an adapter)",
+      ],
+    },
+    diagramNodes: [
+      { id: "FHIR", label: "FHIR API Gateway", tier: "App", connectFrom: "API" },
+      { id: "EHR", label: "EHR Sync", tier: "App", connectFrom: "FHIR" },
+    ],
+  },
+  retail: {
+    label: "retail / e-commerce",
+    modules: ["Catalog", "Cart", "Orders", "Inventory", "Payments", "Recommendations"],
+    storageUse: "product images and media assets, served via CDN with on-the-fly resizing",
+    queueUse: "the order pipeline (place → reserve → fulfill), inventory sync, and real-time analytics",
+    apiNote: "a Backend-for-Frontend per channel (web, mobile) plus public webhooks for partners and marketplaces",
+    securityFocus:
+      "PCI-DSS for payments (tokenization + scope reduction), bot/abuse protection on hot endpoints, and rate limiting during flash sales",
+    compliance: ["PCI-DSS", "PDPA"],
+    decision: {
+      component: "Edge Personalization + CDN",
+      rationale:
+        "E-commerce conversion is dominated by perceived speed and relevance. Serving catalog and media from the CDN edge, with edge-side personalization for recommendations and A/B tests, keeps time-to-first-byte low and absorbs flash-sale traffic before it reaches the origin.",
+      advantages: [
+        "Sub-100ms TTFB for catalog and media globally",
+        "Edge absorbs flash-sale spikes before they hit the origin",
+        "Personalization and experimentation at the edge",
+      ],
+      tradeOffs: [
+        "Cache invalidation for price/inventory changes needs care",
+        "Edge logic adds a deployment surface to manage",
+        "Eventually-consistent inventory must be reconciled async",
+      ],
+    },
+    diagramNodes: [
+      { id: "SEARCH", label: "Search & Recs", tier: "App", connectFrom: "API" },
+      { id: "INV", label: "Inventory", tier: "Data", connectFrom: "BE1", connectTo: "DB" },
+    ],
+  },
+  education: {
+    label: "education / LMS",
+    modules: ["Courses", "Enrollments", "Assessments", "Progress", "Billing"],
+    storageUse: "course videos, documents, and learner uploads, tiered to archive for cold content",
+    queueUse: "video transcoding, notification fan-out, and learning-analytics events",
+    apiNote: "REST for transactional writes (enrollments, payments) with idempotency keys, GraphQL for dashboard aggregation",
+    securityFocus:
+      "data privacy for minors/learners (FERPA/PDPA), role-based access (learner/instructor/admin), and protection of assessment integrity",
+    compliance: ["FERPA", "PDPA"],
+    decision: {
+      component: "ISR + Async Video Pipeline",
+      rationale:
+        "Course catalogs are mostly static but personalized per learner. Incremental Static Regeneration (ISR) renders catalog pages at the edge and revalidates on change, while a transcoder pipeline (queue → workers → object storage) handles uploaded video off the request path.",
+      advantages: [
+        "Near-instant catalog loads at the edge",
+        "Heavy transcoding never blocks the learner's request",
+        "Cheap scaling of read-heavy catalog traffic",
+      ],
+      tradeOffs: [
+        "ISR revalidation windows can briefly show stale data",
+        "Transcoding pipeline needs idempotent workers and retries",
+        "CDN caching complicates per-learner personalization",
+      ],
+    },
+    diagramNodes: [
+      { id: "VIDEO", label: "Transcoder", tier: "App", connectFrom: "MQ", connectTo: "S3" },
+    ],
+  },
+  general: {
+    label: "general enterprise",
+    modules: ["Core Domain", "Users & Access", "Billing", "Notifications"],
+    storageUse: "documents, uploads, and backups",
+    queueUse: "background jobs, notifications, and analytics events",
+    apiNote: "REST for writes with idempotency keys, GraphQL for flexible reads",
+    securityFocus:
+      "defense in depth: WAF + DDoS protection at the edge, mTLS between services, secrets in a managed vault, least-privilege IAM, and encryption in transit and at rest",
+    compliance: ["PDPA"],
+    decision: {
+      component: "Modular Monolith (BFF)",
+      rationale:
+        "At a general enterprise scale, a modular monolith with a Backend-for-Frontend balances delivery speed and clean boundaries, and can be split into services later without re-architecture when domains grow.",
+      advantages: [
+        "Faster iteration than microservices at this scale",
+        "Clear module boundaries ease a future split",
+        "Single deployable simplifies operations",
+      ],
+      tradeOffs: [
+        "Module boundaries need enforced discipline",
+        "Shared database risks coupling if not partitioned",
+        "Scaling is per-deployment until split",
+      ],
+    },
+    diagramNodes: [],
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Country → cloud region                                                     */
+/* -------------------------------------------------------------------------- */
+
+const COUNTRY_REGION: Record<string, string> = {
+  malaysia: "ap-southeast-3",
+  singapore: "ap-southeast-1",
+  indonesia: "ap-southeast-3",
+  thailand: "ap-southeast-7",
+  vietnam: "ap-southeast-1",
+  philippines: "ap-southeast-3",
+  japan: "ap-northeast-1",
+  india: "ap-south-1",
+  uae: "me-central-1",
+  "saudi arabia": "me-central-1",
+  "saudi": "me-central-1",
+  australia: "ap-southeast-2",
+  "united kingdom": "eu-west-2",
+  uk: "eu-west-2",
+  germany: "eu-central-1",
+  usa: "us-east-1",
+  "united states": "us-east-1",
+};
+
+/* -------------------------------------------------------------------------- */
+/* Detection                                                                  */
+/* -------------------------------------------------------------------------- */
+
+function detectDomain(t: string): Domain {
+  if (/\bbank|banking|core banking|fintech|financial|payments?|ledger|trading|insurance/.test(t))
+    return "financial";
+  if (/healthcare|hospital|patient|ehr|emr|clinical|medical|prescription|pharma/.test(t))
+    return "healthcare";
+  if (/ecommerce|e-commerce|retail|shop|storefront|marketplace|cart|catalog/.test(t))
+    return "retail";
+  if (/lms|learning management|moodle|canvas|education|course|enrollment|student|assessment/.test(t))
+    return "education";
+  return "general";
+}
+
+function detectAppType(t: string, domain: Domain): string {
+  if (domain === "financial") return "a core banking / fintech platform";
+  if (domain === "healthcare") return "a patient portal & EHR integration platform";
+  if (domain === "retail") return "an e-commerce storefront & order platform";
+  if (domain === "education") return "an LMS (Learning Management System)";
+  return "an enterprise application";
+}
+
+function detectDb(t: string): { db: string; dbTarget: string; isMigration: boolean } {
+  const isMigration = /migrat|move (from|off)|replace|moderniz|cut[- ]?over|cutover/.test(t);
   const isOracle = /oracle/.test(t);
-  const isOceanBase = /oceanbase/.test(t);
+  const isSqlServer = /sql\s*server|mssql/.test(t);
   const isMySQL = /mysql/.test(t);
   const isPostgres = /postgres|postgresql/.test(t);
-  const isSqlServer = /sql\s*server|mssql/.test(t);
+  const wantsOceanBase = /oceanbase/.test(t);
 
-  const dbTarget = isOceanBase
+  if (!isMigration && !isOracle && !isSqlServer && !isMySQL && !isPostgres && !wantsOceanBase) {
+    // Greenfield — pick a sensible default target by what the app needs.
+    return { db: "", dbTarget: "PostgreSQL (Aurora-compatible)", isMigration: false };
+  }
+
+  const dbTarget = wantsOceanBase
     ? "OceanBase"
-    : isMySQL
-      ? "MySQL / Aurora MySQL"
-      : isPostgres
-        ? "PostgreSQL / Aurora PostgreSQL"
+    : isPostgres
+      ? "PostgreSQL / Aurora PostgreSQL"
+      : isMySQL
+        ? "MySQL / Aurora MySQL"
         : isSqlServer
           ? "PostgreSQL (refactored from SQL Server)"
           : "OceanBase";
@@ -60,305 +305,597 @@ function detect(text: string): DetectedRequirements {
           ? "PostgreSQL"
           : "a legacy relational database";
 
+  return { db, dbTarget, isMigration: true };
+}
+
+function scaleOf(users: number): Scale {
+  if (users >= 50000) return "xlarge";
+  if (users >= 10000) return "large";
+  if (users >= 1000) return "medium";
+  return "small";
+}
+
+function detect(text: string): DetectedRequirements {
+  const t = text.toLowerCase();
+
   const countryMatch =
-    t.match(/country:\s*([a-z\s,]+)/) ??
-    t.match(/\b(malaysia|singapore|indonesia|thailand|vietnam|philippines|japan|india|uae|saudi|australia|united kingdom|uk|germany|usa|united states)\b/);
-  const country = countryMatch?.[1]?.trim().replace(/,$/, "") ?? "Malaysia";
+    t.match(/country:\s*([a-z][a-z ,]*)/) ??
+    t.match(
+      /\b(malaysia|singapore|indonesia|thailand|vietnam|philippines|japan|india|uae|saudi arabia|saudi|australia|united kingdom|uk|germany|usa|united states)\b/,
+    );
+  const countryRaw = countryMatch?.[1]?.trim().replace(/,$/, "") ?? "malaysia";
+  // Capitalize each word for display ("saudi arabia" -> "Saudi Arabia").
+  const country = countryRaw.replace(/\b\w/g, (c) => c.toUpperCase());
+  const region = COUNTRY_REGION[country.toLowerCase()] ?? "ap-southeast-1";
 
   const usersMatch = t.match(/users?:\s*([\d,]+)/) ?? t.match(/([\d,]+)\s*users/);
   const users = usersMatch ? Number(usersMatch[1].replace(/,/g, "")) : 5000;
+  const scale = scaleOf(users);
 
-  const ha = /high availability|\bha\b|always[- ]on|active[- ]active|zero downtime/.test(t) || users >= 1000;
-  const dr = /disaster recovery|\bdr\b|failover|business continuity|cross[- ]region/.test(t);
+  const ha = /high availability|\bha\b|always[- ]on|active[- ]active|zero downtime|no downtime/.test(t) || users >= 1000;
+  const dr = /disaster recovery|\bdr\b|failover|business continuity|cross[- ]region|cross-region/.test(t);
 
   const budgetMatch = t.match(/budget[^a-z]*?(low|medium|high)/);
-  const budget = budgetMatch?.[1] ?? "medium";
+  const budget = (budgetMatch?.[1] as Budget) ?? "medium";
 
-  let appType = "the application";
-  if (/lms|learning management|moodle|canvas/.test(t)) appType = "an LMS (Learning Management System)";
-  else if (/erp|enterprise resource/.test(t)) appType = "an ERP";
-  else if (/crm|customer relationship/.test(t)) appType = "a CRM";
-  else if (/ecommerce|e-commerce|shop|storefront/.test(t)) appType = "an e-commerce platform";
-  else if (/banking|core banking|fintech/.test(t)) appType = "a core banking platform";
-  else if (/healthcare|hospital|ehr|emr/.test(t)) appType = "a healthcare platform";
-  else if (/lms/.test(t)) appType = "an LMS";
+  const domain = detectDomain(t);
+  const { db, dbTarget, isMigration } = detectDb(t);
+  const appType = detectAppType(t, domain);
 
-  let domain = "general enterprise";
-  if (/banking|fintech|financial/.test(t)) domain = "financial services";
-  else if (/healthcare|hospital/.test(t)) domain = "healthcare";
-  else if (/ecommerce|retail/.test(t)) domain = "retail / e-commerce";
-  else if (appType.includes("LMS")) domain = "education";
-
-  return { db, dbTarget, country, users, ha, dr, budget, appType, domain };
-}
-
-function buildComponents(d: DetectedRequirements): ArchitectureComponents {
-  const users = d.users;
-  const scaleNote =
-    users >= 50000
-      ? "with horizontal sharding and read replicas from day one"
-      : users >= 5000
-        ? "with read replicas to absorb read-heavy traffic"
-        : "right-sized for current load with headroom";
+  // Region-specific compliance additions.
+  const compliance = [...DOMAIN_PROFILES[domain].compliance];
+  if (/singapore/.test(t) && domain === "financial") compliance.push("MAS TRM");
+  if (/(malaysia|thailand|indonesia|philippines|vietnam|singapore)/.test(t) && !compliance.includes("PDPA"))
+    compliance.push("PDPA");
+  if (/(germany|eu|europe)/.test(t) && !compliance.includes("GDPR")) compliance.push("GDPR");
 
   return {
-    frontend:
-      `**Next.js 14** (App Router, SSR/ISR) served from a global CDN edge for sub-100ms TTFB in ${d.country}. Static course catalog pages use ISR; authenticated dashboards stream via React Server Components. Tailwind for the design system.`,
-    backend:
-      `**Node.js (NestJS)** modular monolith exposing domain modules (Courses, Enrollments, Assessments, Billing). Chosen for ${d.appType} because of fast iteration, strong typing, and a mature ecosystem. Containerized and horizontally scalable.`,
-    apiLayer:
-      `**REST + GraphQL** hybrid. REST for transactional writes (enrollments, payments) with idempotency keys; GraphQL (Apollo Router) for flexible dashboard data aggregation. All routes behind an API gateway with rate limiting and JWT validation.`,
-    loadBalancer:
-      `**Cloud Application Load Balancer** (L7) with path-based routing, sticky sessions only where needed, and integrated WAF. Health checks target \`/healthz\` and \`/ready\`. SSL termination at the edge with TLS 1.3.`,
-    database:
-      d.dr || d.ha
-        ? `**${d.dbTarget}** deployed in a multi-AZ primary/standby configuration ${scaleNote}. ${d.db} migrated via assessment, schema conversion, data migration, and validation cut-over. Distributed ACID transactions keep enrollments and assessments consistent.`
-        : `**${d.dbTarget}** ${scaleNote}. Migrated from ${d.db} via assessment, schema/object conversion, data migration, and a validated cut-over.`,
-    cache:
-      `**Redis (managed, Multi-AZ)** for session store, hot course metadata, rate-limit counters, and idempotency keys. TTL-based invalidation with cache-aside; write-through only for enrollment state.`,
-    messageQueue:
-      `**Kafka (or managed MSK equivalent)** for async workloads: video transcoding, notification fan-out, analytics events, and audit logging. Decouples slow operations from the request path so the API stays responsive.`,
-    objectStorage:
-      `**S3-compatible object storage** for course videos, documents, learner uploads, and backups. Versioning + lifecycle policies to Glacier-tier for cold content; signed URLs for access control.`,
-    monitoring:
-      `**Prometheus + Grafana** for metrics (RED/USE method), with golden-signal dashboards (latency, traffic, errors, saturation). Synthetic checks for critical learner journeys (login, course open, assessment submit).`,
-    logging:
-      `**OpenTelemetry** collectors shipping structured logs and traces to a managed log store (e.g., Loki/ELK). Correlation IDs flow end-to-end so a failed enrollment can be traced across API, queue, and DB.`,
-    security:
-      `Defense in depth: WAF + DDoS protection at the edge, mTLS between services, secrets in a managed vault (rotated), least-privilege IAM, and encryption in transit and at rest (KMS-managed keys). Data residency kept within ${d.country} / region.`,
-    disasterRecovery: d.dr
-      ? `Cross-region standby with automated async replication (${d.dbTarget} binlog/redo shipping), 15-min snapshot frequency, and runbooks + quarterly DR drills. Failover is automated for the data tier with manual approval for full region switch.`
-      : `Daily automated backups with PITR, weekly restore validation, and documented runbooks. Multi-AZ standby for the data tier handles zonal failure.`,
-    network:
-      `VPC with private subnets for data/queue tiers, public subnets only for the load balancer. VPC endpoints for managed services, NAT for egress, and Security Groups enforcing least-privilege east-west traffic.`,
+    domain,
+    db,
+    dbTarget,
+    isMigration,
+    country,
+    region,
+    users,
+    scale,
+    ha,
+    dr,
+    budget,
+    appType,
+    compliance: Array.from(new Set(compliance)),
   };
 }
 
-const DEFAULT_DIAGRAM = `flowchart TD
-  subgraph Client["Client Tier"]
-    WEB[Web Browser]
-    MOB[Mobile App]
-  end
-  subgraph Edge["Edge / Security"]
-    CDN[CDN + WAF]
-    LB[Application Load Balancer]
-  end
-  subgraph App["Application Tier - Multi AZ"]
-    API[API Gateway]
-    BE1[Backend Service A]
-    BE2[Backend Service A - Replica]
-  end
-  subgraph Data["Data Tier"]
-    DB[("OceanBase Primary")]
-    DBR[("OceanBase Standby")]
-    REDIS[("Redis Cache")]
-    MQ[[Kafka]]
-    S3[("Object Storage")]
-  end
-  subgraph Obs["Observability"]
-    MON[Prometheus + Grafana]
-    LOG[Loki / ELK]
-  end
-  subgraph DR["Cross-Region DR"]
-    DRDB[("Standby Region")]
-  end
-  WEB --> CDN
-  MOB --> CDN
-  CDN --> LB --> API
-  API --> BE1 & BE2
-  BE1 --> DB & REDIS & MQ & S3
-  BE2 --> DB & REDIS & MQ & S3
-  DB -.->|async replication| DBR
-  DB -.->|async replication| DRDB
-  BE1 -.->|metrics| MON
-  BE2 -.->|metrics| MON
-  BE1 -.->|logs| LOG
-  BE2 -.->|logs| LOG
-  DB -.->|backups| S3`;
+/* -------------------------------------------------------------------------- */
+/* Components                                                                 */
+/* -------------------------------------------------------------------------- */
 
-function buildDecisions(d: DetectedRequirements): DesignDecision[] {
-  return [
-    {
-      component: d.dbTarget,
-      rationale: `Selected as the migration target for ${d.db} because it offers MySQL/Oracle compatibility, distributed ACID transactions, and native multi-AZ + cross-region replication — satisfying the ${d.country} residency, scale (${d.users.toLocaleString()} users), and ${d.dr ? "DR" : "availability"} requirements without a re-architect.`,
-      advantages: [
-        "Distributed, strongly-consistent writes scale horizontally across nodes",
-        "Oracle/MySQL compatibility lowers migration risk and PL/SQL conversion effort",
-        "Built-in multi-AZ and cross-region replication serve HA and DR from one engine",
-        "Compression and storage pooling reduce TCO versus legacy licensing",
-      ],
-      tradeOffs: [
-        "Operational tooling maturity differs from the incumbent; DBAs need upskilling",
-        "Distributed tuning (merge compaction, locality) has a learning curve",
-        "Vendor-specific SQL extensions require conversion and regression testing",
-      ],
-    },
-    {
-      component: "Kubernetes (EKS/ACK)",
-      rationale:
-        "Container orchestration standardizes deployment of the NestJS services, jobs, and workers, and gives elastic scale for ${d.appType} traffic spikes (e.g., enrollment openings). Managed control plane reduces operational burden.",
-      advantages: [
-        "Horizontal Pod Autoscaling on CPU/custom metrics handles traffic spikes",
-        "Rolling + canary deploys with instant rollback",
-        "Consistent dev/staging/prod environments via OCI images",
-      ],
-      tradeOffs: [
-        "Platform complexity requires an SRE skill set",
-        "Cost floor is higher than serverless for low traffic",
-        "Day-2 operations (networking, ingress, secrets) need investment",
-      ],
-    },
-    {
-      component: "Redis (managed)",
-      rationale:
-        "Provides sub-millisecond reads for session, catalog, and rate-limit data, protecting the database from read amplification during peak learner activity.",
-      advantages: [
-        "Removes hot-read load from the primary database",
-        "Atomic primitives power rate limiting and idempotency",
-        "Multi-AZ managed offering meets the availability target",
-      ],
-      tradeOffs: [
-        "Another data store to operate and keep consistent",
-        "Cache stampede risk if not protected (singleflight / jitter)",
-        "Memory cost scales with cache size",
-      ],
-    },
-    {
-      component: "Kafka",
-      rationale:
-        "Decouples long-running work (video transcoding, notifications, analytics) from the synchronous request path, keeping learner-facing latency low and enabling replayable event streams.",
-      advantages: [
-        "Buffers load spikes from batch and async workloads",
-        "Durable, replayable event log for analytics and audit",
-        "Decouples producers from consumers for independent scaling",
-      ],
-      tradeOffs: [
-        "Adds distributed-systems complexity to operations",
-        "Requires schema governance (e.g., Schema Registry)",
-        "At-least-once delivery needs consumers to be idempotent",
-      ],
-    },
-    {
-      component: "OpenTelemetry + Prometheus",
-      rationale:
-        "Vendor-neutral observability avoids lock-in and correlates logs, metrics, and traces across the API, queue, and data tiers — critical for debugging distributed transactions post-migration.",
-      advantages: [
-        "Single correlation ID spans the entire request lifecycle",
-        "Golden-signal dashboards catch regressions during cut-over",
-        "Portable across cloud providers",
-      ],
-      tradeOffs: [
-        "Requires instrumentation discipline across services",
-        "Storage cost grows with retention and cardinality",
-        "Needs SLO/alert tuning to avoid alert fatigue",
-      ],
-    },
-  ];
+function buildComponents(d: DetectedRequirements): ArchitectureComponents {
+  const p = DOMAIN_PROFILES[d.domain];
+  const users = d.users;
+
+  const scaleClause =
+    d.scale === "xlarge"
+      ? "with horizontal sharding, read replicas, and connection pooling from day one"
+      : d.scale === "large"
+        ? "with read replicas and connection pooling to absorb read-heavy traffic"
+        : d.scale === "medium"
+          ? "with read replicas to absorb read-heavy traffic"
+          : "right-sized for current load with headroom";
+
+  const orchestrator =
+    d.scale === "xlarge" || d.scale === "large"
+      ? "managed Kubernetes (EKS/ACK)"
+      : "managed Kubernetes (EKS/ACK) with an option to start as a modular monolith";
+
+  const dbDesc = d.isMigration
+    ? d.dr || d.ha
+      ? `**${d.dbTarget}** in a multi-AZ primary/standby configuration ${scaleClause}. Migrated from ${d.db} via assessment, schema/object conversion, data migration, and a validated cut-over. Distributed ACID transactions keep ${p.modules[0]?.toLowerCase() ?? "records"} consistent.`
+      : `**${d.dbTarget}** ${scaleClause}. Migrated from ${d.db} via assessment, schema/object conversion, data migration, and a validated cut-over.`
+    : `**${d.dbTarget}** ${scaleClause}, with point-in-time recovery and automated backups.`;
+
+  const cacheDesc =
+    d.scale === "xlarge" || d.scale === "large"
+      ? `**Redis (managed, Multi-AZ)** as a multi-tier cache — session store, hot ${p.label.includes("retail") ? "catalog" : "data"} reads, rate-limit counters, and idempotency keys — with cache-aside plus singleflight to prevent stampedes.`
+      : `**Redis (managed${d.ha ? ", Multi-AZ" : ""})** for sessions, hot reads, rate-limit counters, and idempotency keys (cache-aside).`;
+
+  return {
+    frontend: `**Next.js 14** (App Router, SSR/ISR) served from a global CDN edge for low TTFB in ${d.country} (${d.region}). ${d.domain === "retail" ? "Catalog and media served from the edge; personalized dashboards stream via React Server Components." : d.domain === "education" ? "Static catalog pages use ISR; authenticated dashboards stream via React Server Components." : "Authenticated dashboards stream via React Server Components."} Tailwind for the design system.`,
+    backend: `**Node.js (NestJS)** modular services exposing domain modules (${p.modules.join(", ")}). Chosen for ${d.appType} for fast iteration, strong typing, and a mature ecosystem. Containerized and horizontally scalable on ${orchestrator}.`,
+    apiLayer: `${p.apiNote}. All routes behind an API gateway with rate limiting, JWT validation, and idempotency keys for writes.`,
+    loadBalancer: `${d.dr ? "Global anycast " : ""}**Application Load Balancer** (L7) with path-based routing, integrated WAF, and health checks. SSL/TLS termination at the edge (TLS 1.3)${d.ha ? " across multiple AZs" : ""}.`,
+    database: dbDesc,
+    cache: cacheDesc,
+    messageQueue: `**${d.scale === "xlarge" ? "Kafka" : "Kafka (managed MSK equivalent)"}** for ${p.queueUse}. Decouples slow operations from the request path so the API stays responsive.`,
+    objectStorage: `**S3-compatible object storage** for ${p.storageUse}. Versioning + lifecycle policies tier cold content to archive; signed URLs gate access.`,
+    monitoring: `**Prometheus + Grafana** for metrics (RED/USE method) with golden-signal dashboards (latency, traffic, errors, saturation). Synthetic checks for the critical ${p.modules[0]?.toLowerCase() ?? "user"} journey.`,
+    logging: `**OpenTelemetry** collectors shipping structured logs and traces to a centralized store (Loki/ELK), with correlation IDs spanning API, queue, and DB${(d.compliance.includes("PCI-DSS") || d.domain === "healthcare") ? " and tamper-evident retention for audit" : ""}.`,
+    security: `${p.securityFocus}. Data residency kept within ${d.country} (${d.region})${d.compliance.length ? `; controls mapped to ${d.compliance.join(", ")}` : ""}.`,
+    disasterRecovery: d.dr
+      ? `Cross-region standby with automated async replication (${d.dbTarget} binlog/redo shipping), frequent snapshots, and runbooks + quarterly DR drills. Failover is automated for the data tier; full-region switch is runbook-driven.`
+      : `Daily automated backups with PITR, weekly restore validation, and documented runbooks${d.ha ? ". Multi-AZ standby for the data tier handles zonal failure." : "."}`,
+    network: `VPC with private subnets for data/queue tiers and public subnets only for the load balancer. VPC endpoints for managed services, NAT for egress, and Security Groups enforcing least-privilege east-west traffic${d.dr ? " plus cross-region VPC peering/Transit Gateway for DR replication" : ""}.`,
+  };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Dynamic Mermaid diagram                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Build a valid Mermaid flowchart that reflects the detected topology: DR
+ * subgraph only when DR is required, HA multi-AZ annotation, domain-specific
+ * service nodes, and conditional standby/replica nodes.
+ *
+ * Node IDs are kept alphanumeric; labels with spaces use the `["..."]` form.
+ */
+function buildDiagram(d: DetectedRequirements): string {
+  const p = DOMAIN_PROFILES[d.domain];
+  const primary = p.modules[0] ?? "Core";
+  const lines: string[] = ["flowchart TD"];
+
+  const az = d.ha || d.dr ? " - Multi AZ" : "";
+
+  // Client tier
+  lines.push('  subgraph Client["Client Tier"]');
+  lines.push("    WEB[Web Browser]");
+  lines.push("    MOB[Mobile App]");
+  lines.push("  end");
+
+  // Edge / security
+  lines.push('  subgraph Edge["Edge / Security"]');
+  lines.push("    CDN[CDN + WAF]");
+  lines.push("    LB[Application Load Balancer]");
+  lines.push("  end");
+
+  // Application tier
+  lines.push(`  subgraph App["Application Tier${az}"]`);
+  lines.push("    API[API Gateway]");
+  lines.push(`    BE1["${primary} Service"]`);
+  if (d.ha || d.dr) lines.push(`    BE2["${primary} - Replica"]`);
+  lines.push("  end");
+
+  // Domain-specific extra nodes (attached under App tier).
+  for (const node of p.diagramNodes) {
+    if (node.tier === "App") {
+      lines.push(`    ${node.id}["${node.label}"]`);
+    }
+  }
+
+  // Data tier
+  lines.push('  subgraph Data["Data Tier"]');
+  lines.push(`    DB[("${d.dbTarget} Primary")]`);
+  if (d.ha || d.dr) lines.push(`    DBR[("${d.dbTarget} Standby")]`);
+  lines.push('    REDIS[("Redis Cache")]');
+  lines.push(`    MQ[["${d.scale === "xlarge" ? "Kafka" : "Message Queue"}"]]`);
+  lines.push('    S3[("Object Storage")]');
+  for (const node of p.diagramNodes) {
+    if (node.tier === "Data") {
+      lines.push(`    ${node.id}["${node.label}"]`);
+    }
+  }
+  lines.push("  end");
+
+  // Observability
+  lines.push('  subgraph Obs["Observability"]');
+  lines.push("    MON[Prometheus + Grafana]");
+  lines.push("    LOG[Centralized Logging]");
+  lines.push("  end");
+
+  // DR tier (only when DR required)
+  if (d.dr) {
+    lines.push('  subgraph DR["Cross-Region DR"]');
+    lines.push(`    DRDB[("${d.dbTarget} Standby Region")]`);
+    lines.push("  end");
+  }
+
+  // Edges: request flow
+  lines.push("  WEB --> CDN");
+  lines.push("  MOB --> CDN");
+  lines.push("  CDN --> LB --> API");
+
+  const backends = d.ha || d.dr ? "BE1 & BE2" : "BE1";
+  lines.push(`  API --> ${backends}`);
+
+  // Domain extra-node wiring.
+  for (const node of p.diagramNodes) {
+    lines.push(`  ${node.connectFrom} --> ${node.id}`);
+    if (node.connectTo) lines.push(`  ${node.id} --> ${node.connectTo}`);
+  }
+
+  // Backends → data tier
+  lines.push(`  ${backends} --> DB & REDIS & MQ & S3`);
+
+  // Replication / DR edges (dashed)
+  if (d.ha || d.dr) {
+    lines.push("  DB -.->|sync/async replication| DBR");
+  }
+  if (d.dr) {
+    lines.push("  DB -.->|async replication| DRDB");
+    lines.push("  S3 -.->|cross-region replication| DRDB");
+  }
+
+  // Observability edges (dashed)
+  const obsSources = ["BE1", ...(d.ha || d.dr ? ["BE2"] : [])];
+  lines.push(`  ${obsSources.join(" & ")} -.->|metrics| MON`);
+  lines.push(`  ${obsSources.join(" & ")} -.->|logs| LOG`);
+
+  // Backups
+  lines.push("  DB -.->|backups| S3");
+
+  return lines.join("\n");
+}
+
+/* -------------------------------------------------------------------------- */
+/* Design decisions                                                           */
+/* -------------------------------------------------------------------------- */
+
+function buildDecisions(d: DetectedRequirements): DesignDecision[] {
+  const p = DOMAIN_PROFILES[d.domain];
+  const decisions: DesignDecision[] = [];
+
+  // 1. Database (migration or greenfield).
+  if (d.isMigration) {
+    decisions.push({
+      component: d.dbTarget,
+      rationale: `Selected as the migration target for ${d.db} because it offers strong consistency${d.dr ? ", native multi-AZ and cross-region replication" : ""}, and addresses the ${d.country} residency, ${d.scale}-scale (${d.users.toLocaleString()} users), and ${d.dr ? "DR" : d.ha ? "availability" : "operational"} requirements without a full re-architect.`,
+      advantages: [
+        "Strongly-consistent, scalable writes avoid the migration's worst pitfalls",
+        "Compatibility with the source dialect lowers conversion risk",
+        d.dr ? "Built-in replication serves HA and DR from one engine" : "Right-sized for the current workload with headroom",
+      ],
+      tradeOffs: [
+        "Operational tooling differs from the incumbent; DBAs need upskilling",
+        "Vendor-specific SQL extensions require conversion + regression testing",
+        "Performance characteristics must be re-benchmarked under load",
+      ],
+    });
+  } else {
+    decisions.push({
+      component: d.dbTarget,
+      rationale: `A managed ${d.dbTarget} is the default transactional store for ${d.appType}: it is operationally simple, well-supported, and scales ${d.scale === "xlarge" ? "horizontally via read replicas and (later) sharding" : "via read replicas"} as ${d.users.toLocaleString()} users grow.`,
+      advantages: [
+        "Managed backups, patching, and PITR reduce operational burden",
+        "Read replicas decouple reporting/dashboard reads from writes",
+        "Broad ecosystem and tooling familiarity",
+      ],
+      tradeOffs: [
+        "Single-region by default; cross-region DR is an add-on",
+        "Connection management needs pooling at scale",
+        "Sharding later requires application-level coordination",
+      ],
+    });
+  }
+
+  // 2. Orchestration (varies by scale/budget).
+  decisions.push({
+    component:
+      d.scale === "xlarge" || d.scale === "large"
+        ? "Managed Kubernetes (EKS/ACK)"
+        : "Modular Monolith on Kubernetes",
+    rationale:
+      d.scale === "xlarge" || d.scale === "large"
+        ? `At ${d.users.toLocaleString()} users the workload needs elastic horizontal scale and advanced deployment strategies. Managed Kubernetes gives HPA, canary/rolling deploys with rollback, and consistent environments — worth the platform investment at this scale.`
+        : `At ${d.users.toLocaleString()} users a modular monolith on managed Kubernetes balances delivery speed and clean boundaries, and can be split into services later without re-architecture as ${d.appType} grows.`,
+    advantages:
+      d.scale === "xlarge" || d.scale === "large"
+        ? [
+            "Horizontal Pod Autoscaling on custom metrics handles spikes",
+            "Canary + rolling deploys with instant rollback",
+            "Consistent dev/staging/prod via OCI images",
+          ]
+        : [
+            "Faster iteration than microservices at this scale",
+            "Clear module boundaries ease a future split",
+            "Single deployable simplifies operations",
+          ],
+    tradeOffs:
+      d.scale === "xlarge" || d.scale === "large"
+        ? [
+            "Platform complexity requires an SRE skill set",
+            "Cost floor is higher than serverless for low traffic",
+            "Day-2 operations need investment",
+          ]
+        : [
+            "Module boundaries need enforced discipline",
+            "Shared database risks coupling if not partitioned",
+            "Scaling is per-deployment until split",
+          ],
+  });
+
+  // 3. Caching (varies by scale).
+  decisions.push({
+    component: "Redis (managed)",
+    rationale:
+      d.scale === "xlarge" || d.scale === "large"
+        ? `At ${d.users.toLocaleString()} users the database cannot absorb the read load directly. A multi-tier Redis cache (sessions, hot reads, rate limits) protects the primary and keeps p95 latency low, with singleflight + jittered TTLs to prevent stampedes.`
+        : `Redis provides sub-millisecond reads for sessions, hot ${p.label.includes("retail") ? "catalog" : "data"}, and rate-limit counters, protecting the database from read amplification at ${d.users.toLocaleString()} users.`,
+    advantages: [
+      "Removes hot-read load from the primary database",
+      "Atomic primitives power rate limiting and idempotency",
+      d.ha ? "Multi-AZ managed offering meets the availability target" : "Right-sized for current traffic",
+    ],
+    tradeOffs: [
+      "Another data store to operate and keep consistent",
+      "Cache stampede risk if not protected (singleflight / jitter)",
+      "Memory cost scales with cache size",
+    ],
+  });
+
+  // 4. Messaging (varies by domain).
+  decisions.push({
+    component: d.scale === "xlarge" ? "Kafka" : "Kafka (managed)",
+    rationale: `Kafka ${p.queueUse}. It buffers load spikes, provides a durable replayable event log, and decouples producers from consumers so the learner/customer-facing request path stays fast.`,
+    advantages: [
+      "Buffers load spikes from batch and async workloads",
+      "Durable, replayable event log for analytics and audit",
+      "Decouples producers from consumers for independent scaling",
+    ],
+    tradeOffs: [
+      "Adds distributed-systems complexity to operations",
+      "Requires schema governance",
+      "At-least-once delivery needs idempotent consumers",
+    ],
+  });
+
+  // 5. Domain-specific decision.
+  decisions.push(p.decision);
+
+  // 6. Observability.
+  decisions.push({
+    component: "OpenTelemetry + Prometheus",
+    rationale: `Vendor-neutral observability avoids lock-in and correlates logs, metrics, and traces across the API, queue, and data tiers — critical for debugging distributed transactions${d.isMigration ? " during and after migration" : ""}.`,
+    advantages: [
+      "Single correlation ID spans the request lifecycle",
+      "Golden-signal dashboards catch regressions early",
+      "Portable across cloud providers",
+    ],
+    tradeOffs: [
+      "Requires instrumentation discipline across services",
+      "Storage cost grows with retention and cardinality",
+      "Needs SLO/alert tuning to avoid alert fatigue",
+    ],
+  });
+
+  return decisions;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Risks                                                                      */
+/* -------------------------------------------------------------------------- */
+
 function buildRisks(d: DetectedRequirements): Risk[] {
-  const risks: Risk[] = [
-    {
-      id: "R1",
+  const p = DOMAIN_PROFILES[d.domain];
+  const risks: Risk[] = [];
+  let n = 0;
+  const id = () => `R${++n}`;
+
+  if (d.isMigration) {
+    risks.push({
+      id: id(),
       category: "Technical",
-      description: `${d.db} → ${d.dbTarget} migration surfaces incompatible PL/SQL, sequences, or implicit data type coercion that break application queries.`,
+      description: `${d.db} → ${d.dbTarget} migration surfaces incompatible SQL, stored procedures, sequences, or implicit type coercion that break application queries.`,
       severity: "High",
       likelihood: "Medium",
-    },
-    {
-      id: "R2",
+    });
+    risks.push({
+      id: id(),
       category: "Operational",
-      description: "Cut-over causes unplanned downtime or data inconsistency during the switchover window, impacting learners.",
+      description: "Cut-over causes unplanned downtime or data inconsistency during the switchover window, impacting end users.",
       severity: d.ha ? "Critical" : "High",
       likelihood: "Medium",
-    },
-    {
-      id: "R3",
-      category: "Compliance",
-      description: `Personal data of ${d.users.toLocaleString()} ${d.country} users may leave the permitted residency region if services are not pinned.`,
-      severity: "High",
+    });
+  }
+
+  // Compliance risk — always relevant given residency.
+  risks.push({
+    id: id(),
+    category: "Compliance",
+    description: `Personal data of ${d.users.toLocaleString()} ${d.country} users (and ${p.label.includes("health") ? "PHI" : "PII"}) may leave the permitted residency region if services are not pinned${d.compliance.length ? ` — breaching ${d.compliance.join(", ")}` : ""}.`,
+    severity: "High",
+    likelihood: "Medium",
+  });
+
+  // Performance risk.
+  risks.push({
+    id: id(),
+    category: "Performance",
+    description:
+      d.scale === "xlarge" || d.scale === "large"
+        ? `At ${d.users.toLocaleString()} users, unindexed queries or missing read replicas degrade under production load, especially during peak periods.`
+        : "Query plans or missing indexes degrade response times as data grows.",
+    severity: d.scale === "xlarge" ? "High" : "Medium",
+    likelihood: "High",
+  });
+
+  // Domain-specific risk.
+  if (d.domain === "financial") {
+    risks.push({
+      id: id(),
+      category: "Security",
+      description: "Transaction fraud or a double-spend race could cause financial loss and regulatory exposure.",
+      severity: "Critical",
       likelihood: "Medium",
-    },
-    {
-      id: "R4",
-      category: "Performance",
-      description: "Query plans change on the new engine; unindexed or legacy queries degrade under production load.",
-      severity: "Medium",
+    });
+  } else if (d.domain === "healthcare") {
+    risks.push({
+      id: id(),
+      category: "Compliance",
+      description: "Unauthorized access to or leakage of PHI during integration with external EHR/lab systems.",
+      severity: "Critical",
+      likelihood: "Medium",
+    });
+  } else if (d.domain === "retail") {
+    risks.push({
+      id: id(),
+      category: "Operational",
+      description: "Flash-sale traffic spikes (10x baseline) overwhelm the origin and cause checkout failure or overselling.",
+      severity: "High",
       likelihood: "High",
-    },
-    {
-      id: "R5",
-      category: "Delivery",
-      description: "Team lacks operational experience with the new data platform and Kubernetes, slowing incident response.",
+    });
+  } else if (d.domain === "education") {
+    risks.push({
+      id: id(),
+      category: "Operational",
+      description: "Video transcoding backlog during enrollment peaks delays course availability for learners.",
       severity: "Medium",
-      likelihood: "High",
-    },
-  ];
+      likelihood: "Medium",
+    });
+  }
+
+  // Delivery / skills risk.
+  risks.push({
+    id: id(),
+    category: "Delivery",
+    description: "Team lacks operational experience with the new platform and Kubernetes, slowing incident response.",
+    severity: "Medium",
+    likelihood: "High",
+  });
 
   if (d.dr) {
     risks.push({
-      id: "R6",
+      id: id(),
       category: "Operational",
       description: "Cross-region DR failover has never been exercised; RTO/RPO targets are unproven under real failure.",
       severity: "High",
       likelihood: "Medium",
     });
   }
+
+  if (d.budget === "low") {
+    risks.push({
+      id: id(),
+      category: "Financial",
+      description: "Tight budget may force single-AZ or reduced redundancy, undercutting the availability/DR goals.",
+      severity: "Medium",
+      likelihood: "Medium",
+    });
+  }
+
   return risks;
 }
 
-function buildMitigations(d: DetectedRequirements): Mitigation[] {
-  const mitigations: Mitigation[] = [
-    {
-      riskId: "R1",
+/* -------------------------------------------------------------------------- */
+/* Mitigations                                                                */
+/* -------------------------------------------------------------------------- */
+
+function buildMitigations(d: DetectedRequirements, risks: Risk[]): Mitigation[] {
+  const p = DOMAIN_PROFILES[d.domain];
+  const byCat = (cat: string) => risks.find((r) => r.category === cat);
+  const mitigations: Mitigation[] = [];
+
+  const migration = risks.find((r) => r.description.includes("migration surfaces"));
+  if (migration) {
+    mitigations.push({
+      riskId: migration.id,
       strategy: "De-risk schema and SQL conversion before cut-over.",
       actions: [
-        "Run an automated assessment tool to flag incompatible objects and PL/SQL",
-        "Convert and unit-test stored procedures in a staging mirror",
+        "Run an automated assessment to flag incompatible objects and stored procedures",
+        "Convert and unit-test procedures in a staging mirror",
         "Maintain a regression suite of representative production queries",
       ],
-    },
-    {
-      riskId: "R2",
+    });
+  }
+
+  const cutover = risks.find((r) => r.description.includes("Cut-over"));
+  if (cutover) {
+    mitigations.push({
+      riskId: cutover.id,
       strategy: "Plan a zero-downtime, reversible cut-over.",
       actions: [
         "Use dual-write + shadow reads during the transition window",
-        "Cut over during a low-traffic maintenance window with rollback runbook ready",
+        "Cut over during a low-traffic maintenance window with rollback ready",
         "Verify row counts and checksums before and after switchover",
       ],
-    },
-    {
-      riskId: "R3",
-      strategy: "Enforce data residency by architecture, not policy.",
+    });
+  }
+
+  const compliance = byCat("Compliance");
+  if (compliance) {
+    mitigations.push({
+      riskId: compliance.id,
+      strategy: "Enforce data residency and access control by architecture, not policy.",
       actions: [
-        `Pin data, cache, and backups to the ${d.country} region`,
+        `Pin data, cache, and backups to the ${d.country} region (${d.region})`,
         "Block cross-region egress via VPC and routing controls",
         "Encrypt all data at rest with KMS-managed keys and audit access",
+        ...(d.domain === "healthcare"
+          ? ["Apply consent-gated, role-based access to PHI with break-glass audit logging"]
+          : []),
       ],
-    },
-    {
-      riskId: "R4",
+    });
+  }
+
+  const perf = byCat("Performance");
+  if (perf) {
+    mitigations.push({
+      riskId: perf.id,
       strategy: "Validate performance under production-shaped load.",
       actions: [
         "Capture and replay peak traffic against staging",
         "Index and tune the top queries by cost before launch",
         "Add query-timeout and connection-pool guardrails",
+        ...(d.scale === "xlarge" || d.scale === "large"
+          ? ["Provision read replicas and cap DB connections via a pooler"]
+          : []),
       ],
-    },
-    {
-      riskId: "R5",
+    });
+  }
+
+  const domainRisk =
+    byCat("Security") ??
+    risks.find((r) => r.description.includes("PHI")) ??
+    risks.find((r) => r.description.includes("Flash-sale")) ??
+    risks.find((r) => r.description.includes("transcoding"));
+  if (domainRisk) {
+    const actions =
+      d.domain === "financial"
+        ? [
+            "Idempotency keys + optimistic locking prevent double-spend",
+            "Real-time fraud scoring on the event stream with manual review queue",
+            "Reconcile ledger balances daily against the event log",
+          ]
+        : d.domain === "healthcare"
+          ? [
+              "FHIR consent enforcement at the API gateway",
+              "Field-level encryption and tokenization of PHI",
+              "Break-glass access with mandatory audit review",
+            ]
+          : d.domain === "retail"
+            ? [
+                "Edge CDN + queue-based checkout absorbs flash-sale spikes",
+                "Reserve-then-confirm inventory pattern prevents overselling",
+                "Auto-scale + circuit breakers protect the origin",
+              ]
+            : [
+                "Autoscaled transcoding workers with idempotent retries",
+                "Pre-transcode popular content; backfill asynchronously",
+                "Queue depth alerts to catch backlog early",
+              ];
+    mitigations.push({
+      riskId: domainRisk.id,
+      strategy: `${d.domain === "retail" ? "Absorb spikes and protect inventory" : "Domain-specific controls"}.`,
+      actions,
+    });
+  }
+
+  const delivery = byCat("Delivery");
+  if (delivery) {
+    mitigations.push({
+      riskId: delivery.id,
       strategy: "Build operational readiness before go-live.",
       actions: [
         "Run enablement sessions and create runbooks for the top failure modes",
         "Pair with the platform vendor for cut-over support",
         "On-call rotation with clear escalation paths from day one",
       ],
-    },
-  ];
+    });
+  }
 
-  if (d.dr) {
+  const drRisk = risks.find((r) => r.description.includes("DR failover"));
+  if (drRisk) {
     mitigations.push({
-      riskId: "R6",
+      riskId: drRisk.id,
       strategy: "Prove DR with regular, automated drills.",
       actions: [
         "Run a quarterly cross-region failover drill",
@@ -367,30 +904,66 @@ function buildMitigations(d: DetectedRequirements): Mitigation[] {
       ],
     });
   }
+
+  const budgetRisk = byCat("Financial");
+  if (budgetRisk) {
+    mitigations.push({
+      riskId: budgetRisk.id,
+      strategy: "Contain cost without sacrificing core SLOs.",
+      actions: [
+        "Reserve baseline capacity; autoscale on-demand for peaks only",
+        "Run async/batch on spot/preemptible nodes with checkpointing",
+        "Tier object storage to archive classes for cold content",
+      ],
+    });
+  }
+
   return mitigations;
 }
 
-function buildDeployment(d: DetectedRequirements): DeploymentRecommendation {
-  const pattern = d.dr
-    ? "Cross Region DR"
-    : d.ha
-      ? "Multi AZ"
-      : "Single AZ";
+/* -------------------------------------------------------------------------- */
+/* Deployment                                                                 */
+/* -------------------------------------------------------------------------- */
 
-  const topology = d.dr
+function buildDeployment(d: DetectedRequirements): DeploymentRecommendation {
+  const p = DOMAIN_PROFILES[d.domain];
+  let pattern: DeploymentRecommendation["pattern"];
+  if (d.dr) pattern = "Cross Region DR";
+  else if (d.ha) pattern = "Multi AZ";
+  else pattern = "Single AZ";
+
+  // High budget allows active-active; medium/low = active/warm standby.
+  const activeActive = d.dr && d.budget === "high";
+
+  const standbyNote =
+    d.budget === "low"
+      ? "A warm (not active-active) standby keeps cost proportionate to the low budget."
+      : "A cost-proportionate warm standby is used given the medium budget.";
+
+  const rationale = d.dr
+    ? `Because DR is a stated requirement and ${d.users.toLocaleString()} users depend on ${d.appType}, a Cross-Region DR pattern protects against full regional failure. ${
+        activeActive
+          ? "An active-active deployment across two regions maximizes availability and absorbs regional loss with no manual failover."
+          : `An active region serves traffic while ${standbyNote} keeps RTO/RPO bounded.`
+      } Compliance (${d.compliance.join(", ") || "regional residency"}) is honored by pinning primary data to ${d.country}.`
+    : d.ha
+      ? `Multi-AZ within ${d.country} meets the high-availability requirement for ${d.users.toLocaleString()} users while keeping cost proportionate to a ${d.budget} budget. A second AZ absorbs zonal failure with no manual intervention; cross-region DR can be added later.`
+      : `A Single-AZ deployment in ${d.country} is sufficient for the current scale and ${d.budget} budget, with a clearly defined, low-effort upgrade path to Multi-AZ as ${d.appType} grows.`;
+
+  const topology: string[] = d.dr
     ? [
-        `Primary region: ${d.country} — active Application + Data tiers across multiple AZs`,
-        "Standby region: paired region with warm application tier and async-replicated data",
+        `Primary region: ${d.country} (${d.region}) — active Application + Data tiers across multiple AZs`,
+        `Standby region: paired region with ${activeActive ? "active application tier" : "warm application tier"} and async-replicated data`,
         "Global traffic manager routes users to the healthy region with health-based failover",
-        "Data tier: ${d.dbTarget} multi-AZ primary in-region, async cross-region replication",
-        "Redis: multi-AZ in-region, rebuilt from DB on regional failover",
+        `${d.dbTarget}: multi-AZ primary in-region, async cross-region replication`,
+        `Redis: ${d.ha ? "multi-AZ in-region" : "in-region"}, rebuilt from DB on regional failover`,
         "Object storage: cross-region replication for content and backups",
         "Backups: continuous PITR + daily snapshots with quarterly restore validation",
-        "Runbooks + quarterly DR drills validate RTO/RPO",
+        `Runbooks + quarterly DR drills validate RTO/RPO${d.compliance.length ? `; residency mapped to ${d.compliance.join(", ")}` : ""}`,
       ]
     : d.ha
       ? [
-          `Single region (${d.country}) across at least two AZs for the Application and Data tiers`,
+          `Single region (${d.country}, ${d.region}) across at least two AZs for the Application and Data tiers`,
           "Stateless services spread across AZs behind a zonal-aware load balancer",
           `${d.dbTarget} primary/standby across AZs with automatic failover`,
           "Redis multi-AZ for cache resilience",
@@ -398,41 +971,62 @@ function buildDeployment(d: DetectedRequirements): DeploymentRecommendation {
           "Health checks and autoscaling absorb zonal loss",
         ]
       : [
-          `Single AZ deployment in ${d.country} for the MVP`,
+          `Single AZ deployment in ${d.country} (${d.region}) for the MVP`,
           "Stateless services behind a load balancer, ready to add a second AZ",
           `${d.dbTarget} with automated backups and PITR`,
           "Redis for cache and sessions",
           "Defined upgrade path to Multi-AZ as traffic grows",
         ];
 
+  const rto = d.dr ? (activeActive ? "< 15 minutes" : "< 1 hour") : d.ha ? "< 4 hours" : "< 24 hours";
+  const rpo = d.dr ? (activeActive ? "< 1 minute" : "< 15 minutes") : d.ha ? "< 1 hour" : "< 24 hours";
+
   return {
     pattern,
-    rationale: d.dr
-      ? `Because DR is a stated requirement and ${d.users.toLocaleString()} users depend on ${d.appType}, a Cross-Region DR pattern protects against full regional failure. The active region serves traffic while a warm standby keeps RTO/RPO bounded — justified given the business continuity requirement${d.budget === "low" ? " (cost-optimized by using a warm, not active-active, standby)" : ""}.`
-      : d.ha
-        ? `Multi-AZ within ${d.country} meets the high-availability requirement for ${d.users.toLocaleString()} users while keeping cost proportionate. A second AZ absorbs zonal failure with no manual intervention; cross-region DR can be added later.`
-        : `A Single-AZ deployment is sufficient for the current scale and budget, with a clearly defined, low-effort upgrade path to Multi-AZ as the ${d.appType} grows.`,
+    rationale,
     topology,
-    drObjective: {
-      rto: d.dr ? "< 1 hour" : d.ha ? "< 4 hours" : "< 24 hours",
-      rpo: d.dr ? "< 15 minutes" : d.ha ? "< 1 hour" : "< 24 hours",
-    },
+    drObjective: { rto, rpo },
   };
 }
 
+/* -------------------------------------------------------------------------- */
+/* Executive summary                                                          */
+/* -------------------------------------------------------------------------- */
+
+function buildSummary(d: DetectedRequirements): string {
+  const p = DOMAIN_PROFILES[d.domain];
+  const migrationClause = d.isMigration
+    ? ` migrate ${d.db} to ${d.dbTarget} to power `
+    : ` stand up a new platform for `;
+  const goal = `The customer, based in ${d.country} (${d.region}), is seeking to${migrationClause}${d.appType} serving approximately ${d.users.toLocaleString()} users.`;
+
+  const priorities = `The stated priorities are${d.ha ? " high availability" : " reliable operation"}${d.dr ? " and disaster recovery" : ""}, at a ${d.budget} budget${d.compliance.length ? `, under ${d.compliance.join(", ")} compliance` : ""}.`;
+
+  const arch = `This proposal recommends a cloud-native, containerized architecture with ${d.dbTarget} as the ${d.isMigration ? "distributed, " : ""}strongly-consistent data tier, a managed Redis cache, ${d.scale === "xlarge" ? "Kafka" : "a Kafka message queue"}, and S3-compatible object storage for ${p.storageUse}. Observability is built in from day one via OpenTelemetry, Prometheus, and centralized logging${d.isMigration ? " to de-risk the migration" : ""}.`;
+
+  const drClause = d.dr
+    ? ` A ${d.budget === "high" ? "active-active cross-region" : "cross-region warm-standby"} disaster recovery design bounds RTO and RPO, meeting the business-continuity requirement.`
+    : "";
+
+  const scaleClause = ` The architecture starts right-sized for the current ${d.users.toLocaleString()}-user base and scales ${d.scale === "xlarge" ? "horizontally via sharding and replicas" : "horizontally"} without re-architecture as the ${p.label} workload grows.`;
+
+  return `${goal}\n\n${priorities}\n\n${arch}${drClause}${scaleClause}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Entry point                                                                */
+/* -------------------------------------------------------------------------- */
+
 export function generateMockSolution(requirements: string): ArchitectureSolution {
   const d = detect(requirements);
+  const risks = buildRisks(d);
   return {
-    executiveSummary: `The customer, based in ${d.country}, is seeking to migrate ${d.db} to ${d.dbTarget} to power ${d.appType} serving approximately ${d.users.toLocaleString()} users. The stated priorities are${d.ha ? " high availability" : " reliable operation"}${d.dr ? " and disaster recovery" : ""}, at a ${d.budget} budget.
-
-This proposal recommends a cloud-native, containerized architecture with ${d.dbTarget} as the distributed, strongly-consistent data tier, a managed Redis cache, Kafka for asynchronous processing, and S3-compatible object storage for media and backups. Observability is built in from day one via OpenTelemetry, Prometheus, and centralized logging to de-risk the migration and ongoing operations.
-
-${d.dr ? `A cross-region disaster recovery design bounds RTO to under an hour and RPO to under 15 minutes, meeting the business-continuity requirement. ` : ""}The architecture is designed to be incrementally adoptable: it starts right-sized for the current ${d.users.toLocaleString()}-user base and scales horizontally without re-architecture as the ${d.domain} workload grows.`,
+    executiveSummary: buildSummary(d),
     components: buildComponents(d),
-    mermaidDiagram: DEFAULT_DIAGRAM,
+    mermaidDiagram: buildDiagram(d),
     designDecisions: buildDecisions(d),
-    risks: buildRisks(d),
-    mitigations: buildMitigations(d),
+    risks,
+    mitigations: buildMitigations(d, risks),
     deployment: buildDeployment(d),
     meta: {
       generatedAt: new Date().toISOString(),
@@ -444,14 +1038,9 @@ ${d.dr ? `A cross-region disaster recovery design bounds RTO to under an hour an
 }
 
 /* -------------------------------------------------------------------------- */
-/* Mock regeneration                                                          */
+/* Mock regeneration (bonus improve buttons)                                  */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Returns a patched solution reflecting the chosen focus. In demo mode we
- * produce believable, opinionated updates for the exact (focus, section)
- * combinations the UI can request, keeping the rest of the solution intact.
- */
 export function regenerateMockSections(
   solution: ArchitectureSolution,
   focus: ImprovementFocus,
@@ -484,20 +1073,16 @@ function applyMockPatch(
         solution.components = {
           ...solution.components,
           backend:
-            "**Node.js (NestJS)** split into bounded-context modules with clear interface contracts; introduces a modular monolith that can be split into services later without re-architecture. Added a dedicated BFF (Backend-for-Frontend) for the learner portal.",
+            solution.components.backend + " Refactored into bounded-context modules with a dedicated Backend-for-Frontend per channel; clear interface contracts gate every deploy.",
           apiLayer:
-            "Standardized on **GraphQL federation** with a gateway composing domain subgraphs, plus a thin REST layer for webhooks and payments. Contract tests gate every deploy.",
+            solution.components.apiLayer + " Standardized contract tests now gate deploys, and a GraphQL federation gateway composes domain subgraphs.",
         };
       } else if (section === "designDecisions") {
         solution.designDecisions = withDecision(
           solution.designDecisions,
           "Modular Monolith + BFF",
-          "A modular monolith with a BFF separates the learner experience from admin/payment flows, improving cohesion and team autonomy without the operational tax of premature microservices.",
-          [
-            "Clear module boundaries ease a future move to microservices",
-            "BFF tailors payloads to each client, reducing over-fetching",
-            "Single deployable simplifies ops at current scale",
-          ],
+          "Splitting into bounded-context modules with a BFF separates concerns and improves team autonomy without the operational tax of premature microservices.",
+          ["Clear module boundaries ease a future move to microservices", "BFF tailors payloads to each client", "Single deployable simplifies ops"],
           ["Module boundaries need enforced discipline", "Shared database risks coupling if not partitioned"],
         );
       }
@@ -508,25 +1093,21 @@ function applyMockPatch(
         solution.designDecisions = withDecision(
           solution.designDecisions,
           "Cost Optimization",
-          "Re-tuned the stack for total cost of ownership: reserved capacity for baseline load, spot/preemptible for batch (transcoding, analytics), right-sized instances, and tiered storage.",
-          [
-            "Reserved instances cut baseline compute 30-40%",
-            "Spot nodes for transcoding/ETL cut batch cost ~70%",
-            "Object-storage lifecycle moves cold media to archive tier",
-          ],
+          "Re-tuned the stack for total cost of ownership: reserved capacity for baseline load, spot/preemptible for batch, right-sized instances, and tiered storage.",
+          ["Reserved instances cut baseline compute 30-40%", "Spot nodes for batch cut cost ~70%", "Object-storage lifecycle moves cold data to archive"],
           ["Spot interruptions require graceful checkpointing", "Reserved capacity reduces flexibility for sudden growth"],
         );
       } else if (section === "deployment") {
         solution.deployment = {
           ...solution.deployment,
           rationale:
-            (solution.deployment.rationale + " ") +
-            "Cost is contained by reserving baseline capacity, running async/batch workloads on spot/preemptible nodes with graceful eviction, and tiering object storage to archive classes for cold content.",
+            solution.deployment.rationale +
+            " Cost is contained by reserving baseline capacity, running async/batch workloads on spot/preemptible nodes with graceful eviction, and tiering object storage to archive classes for cold content.",
           topology: [
             ...solution.deployment.topology,
             "Baseline traffic on reserved instances; spikes on autoscaled on-demand",
             "Transcoding/ETL workers on spot nodes with checkpointing",
-            "Object storage lifecycle: hot -> infrequent access -> archive",
+            "Object storage lifecycle: hot → infrequent access → archive",
           ],
         };
       }
@@ -537,11 +1118,11 @@ function applyMockPatch(
         solution.components = {
           ...solution.components,
           cache:
-            "Multi-tier cache: **CDN edge caching** for static assets + **Redis** for dynamic reads, with read-through and singleflight to prevent stampedes. Hot query results cached at the application layer with jittered TTLs.",
+            "Multi-tier cache: CDN edge + Redis read-through with singleflight to prevent stampedes, plus application-level caching with jittered TTLs.",
           database:
-            solution.components.database + " Added **read replicas** for dashboard/reporting reads and **connection pooling** (PgBather/ProxySQL equivalent) to cap DB connections.",
+            solution.components.database + " Added read replicas for dashboard/reporting reads and connection pooling to cap DB connections.",
           loadBalancer:
-            "Global anycast **load balancer** with latency-based routing, HTTP/3, and connection reuse; in-region L7 LB with path routing and TLS 1.3.",
+            "Global anycast load balancer with latency-based routing, HTTP/3, and connection reuse; in-region L7 LB with path routing and TLS 1.3.",
         };
       } else if (section === "designDecisions") {
         solution.designDecisions = withDecision(
@@ -561,16 +1142,14 @@ function applyMockPatch(
           {
             id: `R${solution.risks.length + 1}`,
             category: "Security",
-            description:
-              "Insider or compromised-credential access could exfiltrate learner PII or payment data.",
+            description: "Insider or compromised-credential access could exfiltrate sensitive data.",
             severity: "Critical",
             likelihood: "Medium",
           },
           {
             id: `R${solution.risks.length + 2}`,
             category: "Security",
-            description:
-              "API abuse (credential stuffing, scraping) targets enrollment and login endpoints.",
+            description: "API abuse (credential stuffing, scraping) targets high-value endpoints.",
             severity: "High",
             likelihood: "High",
           },
@@ -584,7 +1163,7 @@ function applyMockPatch(
             actions: [
               "Enforce mTLS between services and short-lived workload identities",
               "Secrets in a managed vault with automatic rotation and audit logging",
-              "Database/column-level access scoped per service identity; field-level encryption for PII",
+              "Column-level access scoped per service identity; field-level encryption for PII",
             ],
           },
           {
@@ -620,7 +1199,7 @@ function applyMockPatch(
         solution.components = {
           ...solution.components,
           disasterRecovery:
-            "Cross-region active/warm-standby with automated failover: data replicated asynchronously to a standby region, 5-minute snapshot frequency, and health-checked DNS failover. Quarterly drills validate RTO/RPO.",
+            "Cross-region active/warm-standby with automated failover: data replicated asynchronously to a standby region, frequent snapshots, and health-checked DNS failover. Quarterly drills validate RTO/RPO.",
           database:
             solution.components.database + " Deployed multi-AZ in-region with cross-region async replication and automated failover for the data tier.",
           loadBalancer:
