@@ -1,10 +1,10 @@
 # AI Solution Architect Generator
 
-[![Live Demo](https://img.shields.io/badge/Live_Demo-Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJayden6579%2Fai-solution-architect)
+[![Live Demo](https://img.shields.io/badge/Live_Demo-online-22c55e?logo=vercel&logoColor=white)](https://ai-solution-one.vercel.app/)
 [![Deploy with Vercel](https://img.shields.io/badge/Deploy-1_click-563ACC?logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJayden6579%2Fai-solution-architect)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#license)
 
-> 🔗 **Live demo:** _add your Vercel URL here after deploying_ — see [Deploy](#-deploy) below.
+> 🔗 **Live demo:** <https://ai-solution-one.vercel.app/> — runs in Demo Mode, no API key required.
 
 An enterprise-grade web application that simulates a real **pre-sales Solution Architect** workflow. Given a customer's natural-language requirements, it generates a complete, defensible enterprise architecture proposal — proposed architecture, a Mermaid diagram, design decisions, risks, mitigations, and a deployment recommendation — styled like an internal enterprise tool.
 
