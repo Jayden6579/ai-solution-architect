@@ -1,0 +1,27 @@
+"use client";
+
+import { Moon, Sun } from "lucide-react";
+import { useTheme } from "@/components/ThemeProvider";
+import { cn } from "@/lib/utils";
+
+export function ThemeToggle({ className }: { className?: string }) {
+  const { theme, toggleTheme } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label="Toggle dark mode"
+      title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+      className={cn(
+        "inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-slate-100",
+        className,
+      )}
+    >
+      {theme === "dark" ? (
+        <Sun className="h-4 w-4" />
+      ) : (
+        <Moon className="h-4 w-4" />
+      )}
+    </button>
+  );
+}

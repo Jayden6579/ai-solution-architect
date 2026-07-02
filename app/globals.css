@@ -1,0 +1,126 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Custom scrollbar — subtle, enterprise feel */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(148 163 184 / 0.5) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-300 dark:bg-slate-700;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Animated skeleton shimmer */
+.skeleton {
+  @apply relative overflow-hidden rounded-md bg-slate-200/70 dark:bg-slate-800/70;
+}
+.skeleton::after {
+  content: "";
+  @apply absolute inset-0 -translate-x-full;
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.35),
+    transparent
+  );
+  animation: shimmer 1.6s infinite;
+}
+html.dark .skeleton::after {
+  background-image: linear-gradient(
+    90deg,
+    transparent,
+    rgb(255 255 255 / 0.06),
+    transparent
+  );
+}
+
+/* Markdown rendering (custom-styled via .md wrapper instead of typography plugin) */
+.md {
+  @apply text-sm leading-relaxed text-slate-600 dark:text-slate-300;
+}
+.md > :first-child {
+  @apply mt-0;
+}
+.md > :last-child {
+  @apply mb-0;
+}
+.md p {
+  @apply my-2;
+}
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+  @apply font-semibold text-slate-900 dark:text-slate-100;
+}
+.md h1 {
+  @apply text-lg;
+}
+.md h2 {
+  @apply text-base;
+}
+.md h3 {
+  @apply text-sm font-semibold;
+}
+.md ul {
+  @apply my-2 ml-5 list-disc space-y-1;
+}
+.md ol {
+  @apply my-2 ml-5 list-decimal space-y-1;
+}
+.md strong {
+  @apply font-semibold text-slate-900 dark:text-slate-100;
+}
+.md a {
+  @apply text-brand-600 underline underline-offset-2 hover:text-brand-700 dark:text-brand-400;
+}
+.md code {
+  @apply rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[0.85em] text-pink-600 dark:bg-slate-800 dark:text-pink-400;
+}
+.md pre {
+  @apply my-3 overflow-x-auto rounded-lg bg-slate-900 p-4 text-xs text-slate-100 dark:bg-slate-950;
+}
+.md pre code {
+  @apply bg-transparent p-0 text-slate-100;
+}
+.md blockquote {
+  @apply my-2 border-l-2 border-brand-300 pl-3 italic text-slate-500 dark:border-brand-700 dark:text-slate-400;
+}
+
+/* Mermaid container */
+.mermaid-wrap svg {
+  max-width: 100%;
+  height: auto;
+}
+
+@media print {
+  body {
+    background: white;
+  }
+}
