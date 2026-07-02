@@ -1,5 +1,11 @@
 # AI Solution Architect Generator
 
+[![Live Demo](https://img.shields.io/badge/Live_Demo-Vercel-000000?logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJayden6579%2Fai-solution-architect)
+[![Deploy with Vercel](https://img.shields.io/badge/Deploy-1_click-563ACC?logo=vercel&logoColor=white)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJayden6579%2Fai-solution-architect)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](#license)
+
+> 🔗 **Live demo:** _add your Vercel URL here after deploying_ — see [Deploy](#-deploy) below.
+
 An enterprise-grade web application that simulates a real **pre-sales Solution Architect** workflow. Given a customer's natural-language requirements, it generates a complete, defensible enterprise architecture proposal — proposed architecture, a Mermaid diagram, design decisions, risks, mitigations, and a deployment recommendation — styled like an internal enterprise tool.
 
 Built to showcase Solution Architect / Pre-sales Engineer / Technical Consultant skills.
@@ -138,3 +144,39 @@ npm run typecheck  # tsc --noEmit
 ## ⚠️ Disclaimer
 
 AI-generated proposals are a starting point. Always validate technical fit, pricing, licensing, and regional/compliance requirements with your cloud provider before committing to an architecture.
+
+---
+
+## 🚀 Deploy
+
+The fastest way to get a live `https://` URL is **Vercel** (the makers of Next.js):
+
+1. Open **https://vercel.com/new**
+2. Import the `ai-solution-architect` repo from GitHub.
+3. Click **Deploy** — no configuration needed. It runs in **Demo Mode** by default (no API key required, fully free).
+4. You'll get a live URL like `https://ai-solution-architect-xxxx.vercel.app`.
+
+**Use a real LLM instead of Demo Mode?** After deploying, go to
+*Settings → Environment Variables* and add:
+
+| Variable | Required | Example |
+| --- | --- | --- |
+| `LLM_API_KEY` | Yes (to leave Demo Mode) | `sk-...` |
+| `LLM_BASE_URL` | No | `https://api.openai.com/v1` |
+| `LLM_MODEL` | No | `gpt-4o` |
+| `LLM_PROVIDER_NAME` | No | `OpenAI` |
+
+Then **Redeploy**. Any provider with an OpenAI-compatible Chat Completions endpoint works (OpenAI, Azure OpenAI, Ollama, vLLM, …).
+
+<details>
+<summary><b>One-click deploy button</b></summary>
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FJayden6579%2Fai-solution-architect)
+
+</details>
+
+---
+
+## License
+
+MIT — free to use, modify, and share. See [LICENSE](LICENSE) for details.
